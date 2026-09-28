@@ -136,9 +136,10 @@ source (float32 RGBA, crop applied, area-downscaled to the level)
  → mask multiply (alpha *= mask)
  → adjust (§7, colour channels only)
  → LUT
- → layer blur (gaussian, alpha-aware / premultiplied)
  → fade (alpha *= gradient)
- → effects (§8): shadow and glow are generated from the alpha and drawn BEHIND the layer; outline is drawn around it
+ → premultiply, then pad the image (effects reach past the layer box)
+ → layer blur (gaussian on premultiplied RGBA)
+ → effects (§8): shadow and glow from the alpha, drawn BEHIND the layer; outline around it
 ── placement: cheap, never cached ──
  → opacity (whole result × opacity, so fading a layer fades its shadow too, as in Canva/Photoshop)
  → transform (affine warp into canvas space, bilinear/area filtering)
@@ -148,6 +149,7 @@ source (float32 RGBA, crop applied, area-downscaled to the level)
 After all layers: `global_adjust` → `global_lut` → output.
 
 *Changed in M2:* opacity moved after effects (it used to sit before them).
+*Changed in M5:* layer blur moved after fade (so it can spread past the box once padded); render_layer returns `Rendered(pixels, pad)` and both placement paths (`warp_to_canvas`, `level_matrix`) take the padding.
 
 ### 6.2 Caching
 - Each layer caches its `render_layer` result, keyed by `(render_key(layer), level)`. `render_key` hashes every layer field **except** placement ones (id, name, visible, locked, opacity, blend_mode, transform), so new fields invalidate the cache automatically.
@@ -218,14 +220,16 @@ UI details: each slider has a numeric box, double-click resets it to 0, a before
 
 | Effect | Parameters | Notes |
 |---|---|---|
-| Drop shadow | angle, distance, blur, spread, colour, opacity | From final alpha: dilate by spread, blur, offset, tint, draw behind |
-| Outer glow | blur, spread, colour, opacity, blend (screen/add) | Same as shadow with no offset |
-| Outline | width, colour, opacity, position (outside/centre) | Distance transform on alpha. Mostly for text |
-| Layer blur | radius | Gaussian on premultiplied RGBA |
+| Drop shadow | direction, distance, blur, spread, floor squash, colour, opacity | From alpha: dilate by spread, squash towards the bottom edge (contact shadow), blur, offset, tint, draw behind. Presets: Soft drop, Contact shadow |
+| Outer glow | blur, spread, colour, opacity | Same as shadow with no offset. Drawn normally inside the layer image; for an additive look set the layer's blend mode to Add/Screen (a per-effect blend would need the backdrop, which render_layer doesn't have) |
+| Outline | width, colour, opacity, position (outside/centre) | Precise distance transform on alpha, measured from the edge (not pixel centres), anti-aliased |
+| Layer blur | radius | Gaussian on premultiplied RGBA, spreads past the box |
 | Gradient fade | linear/radial, direction (linear), start and end (0–1 along the axis / radius), invert | Multiplies alpha, smooth ramp. This is the "gradient transparent" tool. *Changed in M4:* an axis + start/end instead of two points, so plain sliders drive it; on-canvas handles can map onto the same fields later |
 
-The shadow canvas must extend beyond layer bounds (pad by blur + distance + spread).
+The render pads the layer by the effects' reach (distance + spread + 3σ of blur) so nothing is clipped.
 A shadow is a property of its layer. Never implement it as a separate layer.
+
+**Units:** effect sizes are **canvas pixels** and the shadow direction is **canvas space** (a light in the scene), so resizing or rotating a layer doesn't change its shadow. Consequence: with effects on, `render_key` includes scale/rotation/flip, so rotating or resizing such a layer re-renders it on release (moving still never does). During the drag the preview shows the old render transformed until you let go.
 
 ---
 
@@ -312,7 +316,9 @@ Model sources, filenames, sizes and sha256 values live in `models/models.json`, 
 - Dark theme, single accent colour (purple), large hit targets, 8 px spacing grid.
 - Selecting a layer shows transform handles on the canvas and its settings in the context panel.
 - The Layers list uses thumbnails and drag to reorder, with eye and lock toggles (as in Canva's Position → Layers).
-- Shortcuts: Ctrl+Z/Y, Ctrl+S, Ctrl+E (export), Delete, Ctrl+D (duplicate), arrows (nudge 1 px, Shift = 10 px), Space-drag (pan), Ctrl+wheel (zoom).
+- Shortcuts: Ctrl+Z/Y, Ctrl+S, Ctrl+E (export), Delete, Ctrl+D (duplicate), Ctrl+B (backdrop), arrows (nudge 1 px, Shift = 10 px), Space-drag (pan), Ctrl+wheel (zoom).
+- Snapping (M5): moving snaps a layer's bounds (edges + centre) to the canvas edges/centre and other visible layers' edges/centres within 8 screen px; resizing snaps the dragged handle when the layer isn't rotated off-axis. Pink guides show the match. Hold Ctrl to place freely.
+- Context tabs: Adjust (images), Style (fill, opacity, blend, fade, effects), Layers.
 
 ---
 
@@ -329,6 +335,7 @@ lookbox/
       pipeline.py         # §6.1 orchestration: render_layer, render_key, render (export)
       levels.py           # preview level choice, dithered display quantize, thumbnails
       fill.py             # gradient fills + gradient fade masks
+      effects.py          # layer blur, shadow (+ floor squash), glow, outline, padding
       adjust.py           # §7, one function per control + swatch suggestions
       effects.py          # §8
       blend.py
@@ -357,8 +364,8 @@ lookbox/
     jobs.py               # background workers (import, open, save, export)
     render_service.py     # thread pool + LRU cache for per-layer preview levels
     pixmaps.py            # layer thumbnails
-    panels/               # adjust.py (+ color_edit.py), layer_style.py, layers.py; later: effects, filters, text
-    widgets/              # slider_row.py; later: colour picker, gradient editor
+    panels/               # adjust.py (+ color_edit.py), layer_style.py (+ effects.py), layers.py; later: filters, text
+    widgets/              # slider_row.py, colour_button.py; later: gradient editor
     canvas/               # QGraphicsView, items, handles, mask overlay
       view.py             # mouse/keyboard/zoom
       layer_items.py      # one pixmap item per layer, level choice, placement

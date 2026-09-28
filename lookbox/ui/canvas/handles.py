@@ -175,3 +175,76 @@ def layer_at(doc: Document, store: AssetStore, x: float, y: float,
 
 def quad(t: Transform, w: int, h: int) -> np.ndarray:
     return corners(t, w, h)
+
+
+# ------------------------------------------------------------------ snapping
+
+SNAP_PX = 8.0  # screen pixels: consistent feel at any zoom
+
+
+def bbox(t: Transform, w: int, h: int) -> tuple[float, float, float, float]:
+    """Axis-aligned canvas bounds of the (possibly rotated) layer: x0, y0, x1, y1."""
+    c = corners(t, w, h)
+    return float(c[:, 0].min()), float(c[:, 1].min()), float(c[:, 0].max()), float(c[:, 1].max())
+
+
+def snap_targets(doc: Document, exclude: str | None) -> tuple[list[float], list[float]]:
+    """Canvas edges + centre, plus every other visible layer's edges + centre."""
+    xs = [0.0, doc.canvas.w / 2.0, float(doc.canvas.w)]
+    ys = [0.0, doc.canvas.h / 2.0, float(doc.canvas.h)]
+    for layer in doc.layers:
+        if layer.id == exclude or not layer.visible:
+            continue
+        x0, y0, x1, y1 = bbox(layer.transform, *layer_size(doc, layer))
+        xs += [x0, (x0 + x1) / 2.0, x1]
+        ys += [y0, (y0 + y1) / 2.0, y1]
+    return xs, ys
+
+
+def _best(values: list[float], targets: list[float], thr: float) -> tuple[float, list[float]]:
+    """Smallest correction that puts any of `values` on a target within `thr`, and every
+    target that lines up after that correction (all of them get a guide)."""
+    best = None
+    for v in values:
+        for t in targets:
+            d = t - v
+            if abs(d) <= thr and (best is None or abs(d) < abs(best)):
+                best = d
+    if best is None:
+        return 0.0, []
+    hits = sorted({t for v in values for t in targets if abs(v + best - t) < 1e-6})
+    return best, hits
+
+
+def snap_move(t: Transform, w: int, h: int, targets: tuple[list[float], list[float]],
+              zoom: float) -> tuple[Transform, list[tuple[str, float]]]:
+    """Nudge a moved layer so an edge or its centre lands on a target.
+    Returns the snapped transform and the guides to draw: ("v", x) / ("h", y)."""
+    thr = SNAP_PX / zoom
+    x0, y0, x1, y1 = bbox(t, w, h)
+    dx, tx = _best([x0, (x0 + x1) / 2.0, x1], targets[0], thr)
+    dy, ty = _best([y0, (y0 + y1) / 2.0, y1], targets[1], thr)
+    guides = [("v", x) for x in tx] + [("h", y) for y in ty]
+    return replace(t, x=t.x + dx, y=t.y + dy), guides
+
+
+def snap_point(t: Transform, handle: str, x: float, y: float, targets: tuple[list[float], list[float]],
+               zoom: float) -> tuple[float, float, list[tuple[str, float]]]:
+    """Snap the mouse while resizing, for layers that aren't rotated off-axis.
+    Only the axes the handle actually moves are snapped."""
+    if abs(normalise_deg(t.rotation_deg)) % 90.0 > 1e-6:
+        return x, y, []
+    thr = SNAP_PX / zoom
+    sx, sy = SCALE_HANDLES[handle]
+    if abs(normalise_deg(t.rotation_deg)) % 180.0 > 1e-6:  # 90° / 270°: the handle's axes swap
+        sx, sy = sy, sx
+    guides = []
+    if sx != 0:
+        dx, tx = _best([x], targets[0], thr)
+        x += dx
+        guides += [("v", v) for v in tx]
+    if sy != 0:
+        dy, ty = _best([y], targets[1], thr)
+        y += dy
+        guides += [("h", v) for v in ty]
+    return x, y, guides

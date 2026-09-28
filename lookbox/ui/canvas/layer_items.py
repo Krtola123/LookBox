@@ -27,7 +27,7 @@ def to_qtransform(m) -> QTransform:
     return QTransform(m[0, 0], m[1, 0], m[0, 1], m[1, 1], m[0, 2], m[1, 2])
 
 
-def bgra_to_pixmap(arr) -> QPixmap:
+def bgra_to_pixmap(arr) -> QPixmap:  # arr: uint8 BGRA (h, w, 4)
     h, w = arr.shape[:2]
     img = QImage(arr.data, w, h, 4 * w, QImage.Format.Format_ARGB32_Premultiplied)
     return QPixmap.fromImage(img)  # copies, so `arr` may be freed afterwards
@@ -68,7 +68,8 @@ class _Entry:
         self.want = 1.0  # level the screen needs
         self.shown_key = ""  # render key of the pixmap on screen
         self.shown_level = 0.0
-        self.lw = self.lh = 1  # size of the pixmap on screen
+        self.lw = self.lh = 1  # size of the layer box inside the pixmap on screen
+        self.pad = 0  # pixmap pixels beyond the box on every side (effects)
         self.w = self.h = 1  # full layer size
 
 
@@ -179,7 +180,7 @@ class LayerItems(QObject):
         return self._live.get(layer.id, layer.transform)
 
     def _place(self, e: _Entry, t: Transform) -> None:
-        e.item.setTransform(to_qtransform(level_matrix(t, e.w, e.h, e.lw, e.lh)))
+        e.item.setTransform(to_qtransform(level_matrix(t, e.w, e.h, e.lw, e.lh, e.pad)))
 
     def _update_level(self, e: _Entry, layer: Layer) -> None:
         e.want = choose_level(on_screen_scale(layer.transform, self.screen_scale))
@@ -212,12 +213,13 @@ class LayerItems(QObject):
             level /= 2.0
         return None
 
-    def _show(self, e: _Entry, key: str, level: float, arr) -> None:
+    def _show(self, e: _Entry, key: str, level: float, rendered) -> None:
         if e.shown_key == key and e.shown_level == level:
             return
-        e.item.setPixmap(bgra_to_pixmap(arr))
+        e.item.setPixmap(bgra_to_pixmap(rendered.pixels))
         e.shown_key, e.shown_level = key, level
-        e.lh, e.lw = arr.shape[:2]
+        e.pad = rendered.pad
+        e.lh, e.lw = rendered.pixels.shape[0] - 2 * e.pad, rendered.pixels.shape[1] - 2 * e.pad
 
     def _on_ready(self, key: str, level: float) -> None:
         doc = self.editor.doc

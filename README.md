@@ -28,14 +28,14 @@ pytest
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
 
-## Status: milestone M4
+## Status: milestone M5
 
 | Works | How |
 |---|---|
-| New design | Ctrl+N — size presets, transparent/white/black/custom background |
+| New design | Ctrl+N — size presets (incl. 2160 × 2160), transparent/white/black/custom background |
 | Import images | Ctrl+I, the **Image** button, or drag files from Explorer onto the canvas (lands where you drop) |
 | Select | Click a layer. Clicks pass through transparent pixels, so full-frame renders don't block layers underneath |
-| Move | Drag. Shift = lock to one axis. Arrow keys nudge 1 px, Shift+arrow 10 px |
+| Move | Drag. Snaps to canvas edges/centre and other layers (pink guides); hold Ctrl to place freely. Shift = lock to one axis. Arrow keys nudge 1 px, Shift+arrow 10 px |
 | Resize | Corner handles = proportional (Shift = free), edge handles = one axis, Alt = from centre |
 | Rotate | Handle under the layer. Snaps to 0/90/180 within 2°, Shift = 15° steps |
 | Layers | Right panel: drag to reorder, 👁 show/hide, 🔒 lock, double-click to rename, Delete removes |
@@ -48,9 +48,10 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Never freezes | Import, open, save and export run in the background; export shows progress and can be cancelled |
 | Adjust | **Adjust** tab: Temperature, Tint, Brightness, Contrast, Highlights, Shadows, Whites, Blacks, Vibrance, Saturation, Color edit (swatches), Sharpness, Clarity, Vignette, Invert. Double-click a slider to reset it; one drag = one undo step |
 | Before / after | Toggle in the Adjust header shows the layer without its adjustments (view only) |
-| Backdrop | **Backdrop** button (Ctrl+B) adds a gradient behind everything. **Layer** tab: solid / linear / radial, two colours (with alpha), angle, centre, size, Fit to canvas |
-| Opacity & blend modes | **Layer** tab, any layer: Opacity, Blend mode (Normal, Multiply, Screen, Overlay, Add, Soft light) |
-| Gradient fade | **Layer** tab, any layer: fade to transparent, linear or radial, with direction, start, end, invert |
+| Backdrop | **Backdrop** button (Ctrl+B) adds a gradient behind everything. **Style** tab: solid / linear / radial, two colours (with alpha), angle, centre, size, Fit to canvas |
+| Opacity & blend modes | **Style** tab, any layer: Opacity, Blend mode (Normal, Multiply, Screen, Overlay, Add, Soft light) |
+| Gradient fade | **Style** tab, any layer: fade to transparent, linear or radial, with direction, start, end, invert |
+| Effects | **Style** tab: Shadow (direction, distance, blur, spread, floor squash, colour; presets **Soft drop** and **Contact shadow**), Glow, Outline (outside/centre), Layer blur. Sizes are canvas pixels and the shadow direction stays put when you rotate or resize the layer |
 
 **Tips:** blend modes preview against the checkerboard on a transparent canvas; add a backdrop
 (or pick a background colour) to see exactly what exports. Judge Sharpness at 100% zoom (Ctrl+1): sharpening is too fine to show at fit-to-screen.

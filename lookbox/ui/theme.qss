@@ -140,3 +140,7 @@ QPushButton#resetButton:disabled { color: #5b5c61; border-color: #2e2f33; }
 /* ---- Layer tab (M4) ---- */
 QToolButton#colourButton { border: 1px solid #4a4b52; border-radius: 6px; }
 QToolButton#colourButton:hover { border-color: #8b3dff; }
+
+/* ---- Effects (M5) ---- */
+QCheckBox#effectToggle { background: transparent; font-weight: 600; spacing: 8px; padding-top: 4px; }
+QPushButton#presetButton { padding: 4px 8px; font-size: 12px; }

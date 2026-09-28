@@ -45,9 +45,10 @@ def layer_matrix(t: Transform, w: int, h: int) -> np.ndarray:
     )
 
 
-def level_matrix(t: Transform, w: int, h: int, lw: int, lh: int) -> np.ndarray:
-    """Like layer_matrix, for a level image of lw × lh standing in for the w × h layer."""
-    return layer_matrix(t, w, h) @ _scale(w / lw, h / lh)
+def level_matrix(t: Transform, w: int, h: int, lw: int, lh: int, pad: int = 0) -> np.ndarray:
+    """Like layer_matrix, for a level image whose lw × lh box stands in for the w × h
+    layer, with `pad` extra level pixels on every side (effects reach past the box)."""
+    return layer_matrix(t, w, h) @ _scale(w / lw, h / lh) @ _translate(-pad, -pad)
 
 
 def corners(t: Transform, w: int, h: int) -> np.ndarray:
@@ -70,7 +71,7 @@ def _to_cv(m: np.ndarray) -> np.ndarray:
 
 
 def warp_to_canvas(
-    premult: np.ndarray, t: Transform, out_w: int, out_h: int, out_scale: float = 1.0
+    premult: np.ndarray, t: Transform, out_w: int, out_h: int, out_scale: float = 1.0, pad: int = 0
 ) -> tuple[np.ndarray, tuple[int, int]] | None:
     """Warp a premultiplied RGBA layer into canvas space.
 
@@ -78,17 +79,28 @@ def warp_to_canvas(
     fast. None if the layer lands entirely off-canvas. `out_scale` renders a
     scaled canvas (proxy or export scale); the canvas is out_w × out_h pixels.
     """
+    h, w = premult.shape[0] - 2 * pad, premult.shape[1] - 2 * pad  # the layer box itself
+    m = _scale(out_scale, out_scale) @ layer_matrix(t, w, h) @ _translate(-pad, -pad)
     h, w = premult.shape[:2]
-    m = _scale(out_scale, out_scale) @ layer_matrix(t, w, h)
 
-    # Area-average first when shrinking, since bilinear warps alias when downscaling.
-    ax = min(1.0, t.scale_x * out_scale)
-    ay = min(1.0, t.scale_y * out_scale)
+    # Area-average first when shrinking (bilinear warps alias when downscaling), by
+    # WHOLE-NUMBER factors only: OpenCV's area resize is an exact box filter then,
+    # while fractional factors shift the image by a fraction of a pixel. The final
+    # warp handles the remaining < 2× step.
+    fx = max(1, int(1.0 / max(t.scale_x * out_scale, 1e-9)))
+    fy = max(1, int(1.0 / max(t.scale_y * out_scale, 1e-9)))
     src = premult
-    if ax < 1.0 or ay < 1.0:
-        nw, nh = max(1, round(w * ax)), max(1, round(h * ay))
-        src = cv2.resize(premult, (nw, nh), interpolation=cv2.INTER_AREA)
-        m = m @ _scale(w / nw, h / nh)
+    if fx > 1 or fy > 1:
+        # Grow the padding so the reduction blocks line up with the layer box (as they do
+        # with no padding); otherwise blocks straddle the box edge and soften it.
+        ex, ey = (-pad) % fx, (-pad) % fy  # extra left/top so that pad + extra ≡ 0
+        ph, pw = -(-(h + ey) // fy) * fy, -(-(w + ex) // fx) * fx
+        if (ex, ey) != (0, 0) or (ph, pw) != (h, w):
+            src = np.zeros((ph, pw, 4), np.float32)
+            src[ey:ey + h, ex:ex + w] = premult
+            m = m @ _translate(-ex, -ey)
+        src = cv2.resize(src, (pw // fx, ph // fy), interpolation=cv2.INTER_AREA)
+        m = m @ _scale(fx, fy)
 
     sh, sw = src.shape[:2]
     pts = m @ np.array([[0, 0, 1], [sw, 0, 1], [sw, sh, 1], [0, sh, 1]], dtype=np.float64).T

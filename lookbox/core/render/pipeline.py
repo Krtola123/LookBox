@@ -23,7 +23,9 @@ import numpy as np
 
 from lookbox.core.assets import AssetStore
 from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, layer_to_dict
-from lookbox.core.render import adjust, blend, fill
+from dataclasses import dataclass
+
+from lookbox.core.render import adjust, blend, effects, fill
 from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
 from lookbox.core.render.transform import warp_to_canvas
 
@@ -63,10 +65,28 @@ def render_key(layer: Layer) -> str:
     """Identity of a layer's pre-transform pixels.
 
     Built from every field except placement ones, so fields added by later
-    milestones (adjust, effects, …) invalidate the cache automatically.
+    milestones invalidate the cache automatically. Effects are specified in
+    canvas space, so with effects on, scale/rotation/flip become part of the
+    key (moving still never re-renders).
     """
     d = {k: v for k, v in layer_to_dict(layer).items() if k not in PLACEMENT_FIELDS}
+    if layer.effects.active():
+        t = layer.transform
+        d["_fx_transform"] = [t.scale_x, t.scale_y, t.rotation_deg, t.flip_h, t.flip_v]
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
+
+
+@dataclass
+class Rendered:
+    """render_layer output: premultiplied pixels whose central box is the layer,
+    with `pad` extra pixels on every side for effects."""
+
+    pixels: np.ndarray
+    pad: int = 0
+
+    @property
+    def nbytes(self) -> int:  # so the LRU cache can budget it
+        return int(self.pixels.nbytes)
 
 
 def level_size(w: int, h: int, level: float) -> tuple[int, int]:
@@ -89,6 +109,12 @@ def _base_pixels(layer: Layer, store: AssetStore, level: float) -> np.ndarray:
 
 def render_layer(layer: Layer, store: AssetStore, level: float = 1.0,
                  cancel: threading.Event | None = None) -> np.ndarray:
+    """Pixels only (padding included if the layer has effects). See render_layer_full."""
+    return render_layer_full(layer, store, level, cancel).pixels
+
+
+def render_layer_full(layer: Layer, store: AssetStore, level: float = 1.0,
+                      cancel: threading.Event | None = None) -> Rendered:
     """Pre-transform, pre-opacity layer pixels at `level` (1 = full res), premultiplied.
 
     Later stages must scale pixel radii by `level` (§6.3) so every level
@@ -105,7 +131,12 @@ def render_layer(layer: Layer, store: AssetStore, level: float = 1.0,
         src = src if src.flags.writeable and src.base is None else src.copy()
         src[:, :, 3] *= fill.fade_mask(layer.fade, w, h)
     _check(cancel)
-    return premultiply(src)
+    premult = premultiply(src)
+    if layer.effects.active():  # blur + shadow/glow/outline, padded (§6.1, §8)
+        premult, pad = effects.apply(premult, layer.effects, layer.transform, level)
+        _check(cancel)
+        return Rendered(premult, pad)
+    return Rendered(premult, 0)
 
 
 def render(doc: Document, store: AssetStore, scale: float = 1.0,
@@ -126,10 +157,11 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0,
     for i, layer in enumerate(doc.layers):
         _check(cancel)
         if layer.visible and layer.opacity > 0.0:
-            src = render_layer(layer, store, 1.0, cancel)
+            rendered = render_layer_full(layer, store, 1.0, cancel)
+            src = rendered.pixels
             if layer.opacity < 1.0:
-                src *= np.float32(layer.opacity)  # after effects: fades the shadow too
-            placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale)
+                src = src * np.float32(layer.opacity)  # after effects: fades the shadow too
+            placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale, pad=rendered.pad)
             if placed is not None:
                 patch, (x0, y0) = placed
                 ph, pw = patch.shape[:2]

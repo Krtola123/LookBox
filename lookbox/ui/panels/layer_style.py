@@ -6,14 +6,15 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QFrame, QHBoxLayout, QLabel,
-                               QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
 from lookbox.core.model import BLEND_MODES, FILL_KINDS, FillLayer, GradientFade, GradientStop, Layer
 from lookbox.ui.editor import Editor
+from lookbox.ui.panels.effects import EffectsSection
+from lookbox.ui.widgets.colour_button import ColourButton
 from lookbox.ui.widgets.slider_row import SliderRow
 
 BLEND_LABELS = {"normal": "Normal", "multiply": "Multiply", "screen": "Screen", "overlay": "Overlay",
@@ -39,22 +40,9 @@ def _row(label: str, widget: QWidget) -> QHBoxLayout:
     return h
 
 
-class _ColourButton(QToolButton):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setObjectName("colourButton")
-        self.setFixedSize(44, 26)
-        self.rgba = (0.0, 0.0, 0.0, 1.0)
-
-    def set_rgba(self, rgba) -> None:
-        self.rgba = tuple(rgba)
-        c = QColor.fromRgbF(*self.rgba)
-        css = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
-        self.setStyleSheet(f"QToolButton#colourButton {{ background: {css}; }}")
-        self.setToolTip(f"{c.name().upper()}  ·  {round(c.alphaF() * 100)}% opaque")
-
-
 class LayerPanel(QWidget):
+    interactive = Signal(str, bool)  # layer id, slider being dragged (half-res preview)
+
     def __init__(self, editor: Editor, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = editor
@@ -89,7 +77,7 @@ class LayerPanel(QWidget):
         self.fill_kind.currentIndexChanged.connect(lambda _i: self._fill_change(kind=self.fill_kind.currentData()))
         fl.addLayout(_row("Type", self.fill_kind))
         colours = QHBoxLayout()
-        self.c0, self.c1 = _ColourButton(), _ColourButton()
+        self.c0, self.c1 = ColourButton(), ColourButton()
         self.c0.clicked.connect(lambda: self._pick_colour(0))
         self.c1.clicked.connect(lambda: self._pick_colour(1))
         self.swap = QPushButton("Swap")
@@ -131,6 +119,11 @@ class LayerPanel(QWidget):
         self.fade_invert.setObjectName("invertToggle")
         self.fade_invert.toggled.connect(lambda on: self._fade_change(invert=on))
         col.addWidget(self.fade_invert)
+
+        # ---- effects ----
+        col.addSpacing(8)
+        self.effects = EffectsSection(self)
+        col.addWidget(self.effects)
         col.addStretch(1)
         self.scroll.setWidget(body)
         outer.addWidget(self.scroll, 1)
@@ -193,6 +186,7 @@ class LayerPanel(QWidget):
                 self.fade_start.set_value(fade.start * 100)
                 self.fade_end.set_value(fade.end * 100)
                 self.fade_invert.setChecked(fade.invert)
+            self.effects.refresh(layer.effects)
         finally:
             self._updating = False
 
@@ -200,16 +194,21 @@ class LayerPanel(QWidget):
     def _pressed(self) -> None:
         self._dragging = True
         self._serial += 1
+        if self._layer_id:
+            self.interactive.emit(self._layer_id, True)
 
     def _released(self) -> None:
         self._dragging = False
+        if self._layer_id:
+            self.interactive.emit(self._layer_id, False)
         self.refresh()
 
     def _push(self, name: str, new, text: str) -> None:
         layer = self._layer()
         if layer is None or self._updating or getattr(layer, name) == new:
             return
-        key = f"style-drag-{self._serial}" if self._dragging else f"style-{layer.id}-{name}"
+        # Only a slider drag merges into one undo step; clicks, toggles and picks each get their own.
+        key = f"style-drag-{self._serial}" if self._dragging else None
         self.editor.push(edits.SetLayerField(layer.id, name, getattr(layer, name), new, text=text, merge_key=key))
 
     def _opacity(self, _key: str, v: int) -> None:
@@ -263,10 +262,9 @@ class LayerPanel(QWidget):
             return
         stops = sorted(copy.deepcopy(layer.fill.stops), key=lambda s: s.pos)
         idx = 0 if which == 0 else len(stops) - 1
-        c = QColorDialog.getColor(QColor.fromRgbF(*stops[idx].color), self, "Fill colour",
-                                  QColorDialog.ColorDialogOption.ShowAlphaChannel)
-        if c.isValid():
-            stops[idx] = GradientStop(pos=stops[idx].pos, color=(c.redF(), c.greenF(), c.blueF(), c.alphaF()))
+        rgba = (self.c0 if which == 0 else self.c1).pick("Fill colour")
+        if rgba is not None:
+            stops[idx] = GradientStop(pos=stops[idx].pos, color=rgba)
             self._fill_change(stops=stops)
 
     def _swap_colours(self) -> None:

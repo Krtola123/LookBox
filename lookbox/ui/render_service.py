@@ -17,7 +17,7 @@ from lookbox.core.assets import AssetStore
 from lookbox.core.model import Layer
 from lookbox.core.render.cache import LRUCache
 from lookbox.core.render.levels import MIN_LEVEL, needs_dither, to_display_bgra
-from lookbox.core.render.pipeline import Cancelled, render_key, render_layer
+from lookbox.core.render.pipeline import Cancelled, Rendered, render_key, render_layer_full
 
 CACHE_BUDGET_BYTES = 4 * 1024**3  # §6.2 default; becomes a user setting later
 
@@ -39,9 +39,9 @@ class _Job(QRunnable):
         try:
             if self.cancel.is_set():
                 return  # superseded before it even started
-            px = render_layer(self.layer, self.store, self.level, self.cancel)
-            bgra = to_display_bgra(px, dither=needs_dither(self.layer, self.level))
-            self.cache.put((self.key, self.level), bgra)
+            r = render_layer_full(self.layer, self.store, self.level, self.cancel)
+            bgra = to_display_bgra(r.pixels, dither=needs_dither(self.layer, self.level))
+            self.cache.put((self.key, self.level), Rendered(bgra, r.pad))  # display pixels + padding
         except Cancelled:
             return  # a newer version of this layer was requested; nothing to report
         except Exception as exc:  # reported to the UI, never swallowed (§16.5)
@@ -69,7 +69,8 @@ class RenderService(QObject):
         self._emitter.failed.connect(self._on_failed)
 
     def request(self, layer: Layer, store: AssetStore, level: float, key: str | None = None):
-        """Return the cached BGRA array for (layer, level), or None and start rendering it."""
+        """Return the cached display level (Rendered: BGRA pixels + padding) for (layer, level),
+        or None and start rendering it."""
         key = key or render_key(layer)
         arr = self.cache.get((key, level))
         if arr is not None:

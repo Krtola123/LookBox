@@ -101,6 +101,50 @@ class GradientFade:
 
 
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "add", "soft_light")
+OUTLINE_POSITIONS = ("outside", "center")
+
+
+# Effects (§8). All sizes are CANVAS pixels and the shadow angle is canvas space
+# (a light in the scene), so scaling or rotating a layer doesn't change its shadow.
+
+
+@dataclass(kw_only=True)
+class DropShadow:
+    angle_deg: float = 90.0  # direction the shadow falls; 90 = straight down
+    distance: float = 20.0
+    blur: float = 30.0
+    spread: float = 0.0
+    squash: float = 0.0  # 0–0.95: flatten towards the layer's bottom edge (floor / contact shadow)
+    color: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    opacity: float = 0.55
+
+
+@dataclass(kw_only=True)
+class Glow:
+    blur: float = 40.0
+    spread: float = 0.0
+    color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    opacity: float = 0.6
+
+
+@dataclass(kw_only=True)
+class Outline:
+    width: float = 6.0
+    color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    opacity: float = 1.0
+    position: str = "outside"  # "outside" | "center"
+
+
+@dataclass(kw_only=True)
+class Effects:
+    shadow: DropShadow | None = None
+    glow: Glow | None = None
+    outline: Outline | None = None
+    blur: float = 0.0  # layer blur, canvas px
+
+    def active(self) -> bool:
+        return (self.shadow is not None or self.glow is not None or self.outline is not None
+                or self.blur > 0)
 FILL_KINDS = ("solid", "linear", "radial")
 
 
@@ -149,6 +193,7 @@ class Layer:
     transform: Transform = field(default_factory=Transform)
     adjust: Adjustments = field(default_factory=Adjustments)
     fade: GradientFade | None = None
+    effects: Effects = field(default_factory=Effects)
 
     kind = "base"  # class attribute, not a field
 
@@ -234,7 +279,23 @@ def _layer_common(cls: type, data: dict) -> dict:
     d["adjust"] = adjustments_from_dict(d.get("adjust", {}))
     fade = d.get("fade")
     d["fade"] = GradientFade(**_known(GradientFade, fade)) if fade is not None else None
+    d["effects"] = effects_from_dict(d.get("effects", {}))
     return d
+
+
+def _colour(v) -> tuple[float, float, float, float]:
+    return tuple(float(c) for c in v)
+
+
+def effects_from_dict(data: dict) -> Effects:
+    e = _known(Effects, data)
+    for name, cls in (("shadow", DropShadow), ("glow", Glow), ("outline", Outline)):
+        if e.get(name) is not None:
+            part = _known(cls, e[name])
+            if "color" in part:
+                part["color"] = _colour(part["color"])
+            e[name] = cls(**part)
+    return Effects(**e)
 
 
 def fill_from_dict(data: dict) -> Fill:

@@ -113,3 +113,50 @@ def test_fill_layers_size_and_hit_by_box():
                       fill=Fill(kind="solid", stops=[GradientStop(pos=0, color=(0, 0, 0, 0))]))
     doc.layers = [clear]
     assert H.layer_at(doc, AssetStore(), 10, 90) is None  # fully transparent fill isn't clickable
+
+
+def _snap_doc():
+    from lookbox.core.model import FillLayer
+    doc = Document(canvas=Size(w=1000, h=800))
+    other = FillLayer(id="other", width=100, height=100, transform=Transform(x=700, y=300))
+    doc.layers = [other]
+    return doc
+
+
+def test_snap_move_to_canvas_edges_and_centre():
+    doc = _snap_doc()
+    targets = H.snap_targets(doc, exclude="me")
+    t, guides = H.snap_move(Transform(x=55, y=400), 100, 100, targets, zoom=1.0)  # left edge at 5 → 0
+    assert (t.x, t.y) == (50, 400) and ("v", 0.0) in guides and ("h", 400.0) in guides  # centre on centre
+    t, guides = H.snap_move(Transform(x=503, y=733), 100, 100, targets, zoom=1.0)
+    assert t.x == 500 and ("v", 500.0) in guides  # centre → canvas centre
+
+
+def test_snap_threshold_is_in_screen_pixels():
+    targets = H.snap_targets(_snap_doc(), exclude=None)
+    t, _ = H.snap_move(Transform(x=56, y=123), 100, 100, targets, zoom=1.0)
+    assert t.x == 50  # 6 px away at zoom 1: within the 8 screen-px threshold → snaps
+    t, g = H.snap_move(Transform(x=60, y=123), 100, 100, targets, zoom=1.0)
+    assert t.x == 60 and not [x for x in g if x[0] == "v"]  # 10 px away: no snap
+    t, _ = H.snap_move(Transform(x=60, y=123), 100, 100, targets, zoom=0.5)
+    assert t.x == 50  # zoomed out: 10 canvas px = 5 screen px → snaps
+
+
+def test_snap_to_other_layers_and_rotated_bbox():
+    doc = _snap_doc()
+    targets = H.snap_targets(doc, exclude="me")
+    t, guides = H.snap_move(Transform(x=804, y=100), 100, 100, targets, zoom=1.0)  # left edge at 754
+    assert t.x == 800 and ("v", 750.0) in guides  # my left edge onto the other layer's right edge
+    rot = Transform(x=74, y=400, rotation_deg=45)  # 100 px square rotated: half-extent ≈ 70.7
+    t, _ = H.snap_move(rot, 100, 100, targets, zoom=1.0)
+    assert abs(H.bbox(t, 100, 100)[0]) < 1e-6  # rotated bounds snap to the canvas edge
+
+
+def test_snap_point_for_resize():
+    targets = H.snap_targets(_snap_doc(), exclude=None)
+    x, y, g = H.snap_point(Transform(), "se", 996, 403, targets, zoom=1.0)
+    assert (x, y) == (1000, 400) and len(g) == 2
+    x, y, g = H.snap_point(Transform(), "e", 996, 403, targets, zoom=1.0)
+    assert (x, y) == (1000, 403)  # an edge handle only moves x
+    x, y, g = H.snap_point(Transform(rotation_deg=30), "se", 996, 403, targets, zoom=1.0)
+    assert (x, y, g) == (996, 403, [])  # off-axis rotation: no resize snapping

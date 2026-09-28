@@ -195,7 +195,7 @@ class SetAdjustments(Edit):
         return True
 
 
-_STYLE_FIELDS = {"opacity", "blend_mode", "fade", "fill", "width", "height"}
+_STYLE_FIELDS = {"opacity", "blend_mode", "fade", "fill", "width", "height", "effects"}
 
 
 class SetLayerField(Edit):

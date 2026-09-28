@@ -10,6 +10,7 @@ from lookbox.core.model import Transform
 from lookbox.ui.canvas import handles as H
 
 ACCENT = QColor("#8b3dff")
+GUIDE = QColor("#ff4fa3")
 HOVER = QColor("#4aa3ff")
 OUTSIDE_DIM = QColor(17, 18, 20, 200)
 
@@ -45,3 +46,15 @@ def selection(painter: QPainter, t: Transform, w: int, h: int, zoom: float, lock
             painter.drawEllipse(QPointF(p[0], p[1]), r, r)
         else:
             painter.drawRoundedRect(QRectF(p[0] - r, p[1] - r, 2 * r, 2 * r), r * 0.4, r * 0.4)
+
+
+def guides(painter: QPainter, lines: list[tuple[str, float]], canvas: QRectF) -> None:
+    """Snap guides across the whole canvas: ("v", x) vertical, ("h", y) horizontal."""
+    pen = QPen(GUIDE, 1.0)
+    pen.setCosmetic(True)
+    painter.setPen(pen)
+    for kind, v in lines:
+        if kind == "v":
+            painter.drawLine(QPointF(v, canvas.top()), QPointF(v, canvas.bottom()))
+        else:
+            painter.drawLine(QPointF(canvas.left(), v), QPointF(canvas.right(), v))

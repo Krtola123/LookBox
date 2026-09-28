@@ -67,6 +67,8 @@ class CanvasView(QGraphicsView):
         self._pan_from: QPointF | None = None
         self._space = False
         self._hover: str | None = None
+        self._guides: list[tuple[str, float]] = []  # snap guides shown during a drag
+        self._targets: tuple[list[float], list[float]] = ([], [])
         # Level refresh after zooming, debounced so a wheel spin requests one render, not twenty.
         self._level_timer = QTimer(self)
         self._level_timer.setSingleShot(True)
@@ -103,6 +105,7 @@ class CanvasView(QGraphicsView):
 
     def _cancel_drag(self) -> None:
         d, self._drag = self._drag, None
+        self._guides = []
         if d is not None:
             self.layers.end_preview(d.layer_id)
             self._stats_timer.stop()
@@ -170,6 +173,8 @@ class CanvasView(QGraphicsView):
             live = self._drag is not None and self._drag.layer_id == layer.id
             t = self._drag.current if live else layer.transform
             overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked)
+        if self._guides:
+            overlay.guides(painter, self._guides, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
 
     # ------------------------------------------------------------ helpers
     def _layer(self, lid: str) -> Layer | None:
@@ -205,6 +210,8 @@ class CanvasView(QGraphicsView):
     # ------------------------------------------------------------ drag performance
     def _begin_drag(self, d: _Drag) -> None:
         self._drag = d
+        self._targets = H.snap_targets(self.editor.doc, exclude=d.layer_id)  # fixed for this drag
+        self._guides = []
         self._frames.reset()
         self._stats_timer.start()
 
@@ -259,11 +266,18 @@ class CanvasView(QGraphicsView):
         mods = e.modifiers()
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        snap = not (mods & Qt.KeyboardModifier.ControlModifier)  # hold Ctrl to place freely
         d = self._drag
         if d is not None:
+            self._guides = []
             if d.mode == "move":
-                self._preview(H.drag_move(d.t0, d.press, (x, y), constrain=shift))
+                t = H.drag_move(d.t0, d.press, (x, y), constrain=shift)
+                if snap:
+                    t, self._guides = H.snap_move(t, d.w, d.h, self._targets, self.zoom())
+                self._preview(t)
             elif d.mode == "scale":
+                if snap:
+                    x, y, self._guides = H.snap_point(d.t0, d.handle, x, y, self._targets, self.zoom())
                 self._preview(H.drag_scale(d.t0, d.w, d.h, d.handle, (x, y), free=shift, from_centre=alt))
             else:
                 self._preview(H.drag_rotate(d.t0, d.press, (x, y), snap_15=shift))
@@ -295,6 +309,7 @@ class CanvasView(QGraphicsView):
                 Qt.CursorShape.OpenHandCursor if self._space else Qt.CursorShape.ArrowCursor)
             return
         d, self._drag = self._drag, None
+        self._guides = []
         if d is not None:
             self._stats_timer.stop()
             self._emit_stats(final=True)

@@ -75,3 +75,22 @@ def test_out_scale_renders_scaled_canvas():
     half = _place(img, Transform(x=8, y=8), 16, 16, scale=0.5)
     assert half.shape == (8, 8, 4)
     assert np.allclose(half[2:6, 2:6, :3].mean(), full[4:12, 4:12, :3].mean(), atol=1e-5)
+
+
+def test_padding_never_shifts_or_softens_the_layer_at_any_scale():
+    """Regression (found in M5): shrinking by a fraction, or with reduction blocks that
+    straddled the layer edge, shifted/softened exports by up to half a pixel."""
+    sq = np.ones((160, 160, 4), np.float32)
+
+    def place(img, pad, s):
+        out = np.zeros((200, 200, 4), np.float32)
+        patch, (x0, y0) = warp_to_canvas(img, Transform(x=100, y=100, scale_x=s, scale_y=s), 200, 200, 1.0, pad=pad)
+        out[y0:y0 + patch.shape[0], x0:x0 + patch.shape[1]] = patch
+        return out
+
+    for s in (0.25, 0.3, 0.37, 0.5, 0.8):
+        ref = place(sq, 0, s)
+        for pad in (1, 2, 3, 5, 17):
+            padded = np.zeros((160 + 2 * pad, 160 + 2 * pad, 4), np.float32)
+            padded[pad:pad + 160, pad:pad + 160] = 1.0
+            assert np.abs(place(padded, pad, s) - ref).max() < 1e-5, (s, pad)

@@ -145,7 +145,8 @@ class MainWindow(QMainWindow):
         self.adjust_panel.compare.connect(self.canvas.layers.set_bypass)
         self.layer_panel = LayerPanel(self.editor)
         tabs.addTab(self.adjust_panel, "Adjust")
-        tabs.addTab(self.layer_panel, "Layer")
+        self.layer_panel.interactive.connect(self.canvas.layers.set_interactive)
+        tabs.addTab(self.layer_panel, "Style")
         tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
         self.tabs = tabs
         self.editor.selection_changed.connect(self._follow_selection)
@@ -191,7 +192,7 @@ class MainWindow(QMainWindow):
         self.docs.import_paths(paths, at)
 
     def _follow_selection(self) -> None:
-        """Selecting a backdrop while on Adjust (images only) jumps to the Layer tab."""
+        """Selecting a backdrop while on Adjust (images only) jumps to the Style tab."""
         if isinstance(self.editor.selected_layer(), FillLayer) and self.tabs.currentWidget() is self.adjust_panel:
             self.tabs.setCurrentWidget(self.layer_panel)
 
