@@ -1,6 +1,6 @@
 """The canvas: shows layers, draws selection handles, handles mouse/keyboard.
 
-Placement comes from core.render.transform.layer_matrix (same math as export).
+Layer pixels come from LayerItems (rendered off-thread, cached per level).
 Dragging only previews on the item; the document changes once, on release,
 through a single SetTransform edit (§4.2).
 """
@@ -8,31 +8,23 @@ through a single SetTransform edit (§4.2).
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import replace
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap,
-                           QPolygonF, QTransform)
-from PySide6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
-                               QGraphicsView)
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QTransform
+from PySide6.QtWidgets import QFrame, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from lookbox.commands import edits
 from lookbox.core.model import ImageLayer, Transform
-from lookbox.core.render.pipeline import layer_source
-from lookbox.core.render.transform import layer_matrix
 from lookbox.ui.canvas import handles as H
+from lookbox.ui.canvas import overlay
+from lookbox.ui.canvas.frame_stats import FrameStats
+from lookbox.ui.canvas.layer_items import LayerItems
 from lookbox.ui.editor import Editor
-from lookbox.ui.pixmaps import PixmapCache
+from lookbox.ui.render_service import RenderService
 
-ACCENT = QColor("#8b3dff")
-HOVER = QColor("#4aa3ff")
 MIN_ZOOM, MAX_ZOOM = 0.02, 32.0
-
-
-def qtransform(t: Transform, w: int, h: int) -> QTransform:
-    m = layer_matrix(t, w, h)
-    # Qt maps x' = m11·x + m21·y + dx, y' = m12·x + m22·y + dy.
-    return QTransform(m[0, 0], m[1, 0], m[0, 1], m[1, 1], m[0, 2], m[1, 2])
 
 
 def _checker() -> QPixmap:
@@ -56,14 +48,15 @@ class _Drag:
 class CanvasView(QGraphicsView):
     zoom_changed = Signal(float)
     files_dropped = Signal(list, object)  # paths, (x, y) canvas point
+    frame_stats = Signal(str)  # drag performance readout for the status bar
 
-    def __init__(self, editor: Editor, pixmaps: PixmapCache, parent=None) -> None:
+    def __init__(self, editor: Editor, service: RenderService, parent=None) -> None:
         super().__init__(parent)
         self.editor = editor
-        self.pixmaps = pixmaps
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
-        self._items: dict[str, QGraphicsPixmapItem] = {}
+        self.layers = LayerItems(self._scene, service, editor)
+        self.service = service
         self._canvas_item = QGraphicsRectItem()
         self._canvas_item.setPen(Qt.PenStyle.NoPen)
         self._canvas_item.setZValue(-1e9)
@@ -74,6 +67,17 @@ class CanvasView(QGraphicsView):
         self._pan_from: QPointF | None = None
         self._space = False
         self._hover: str | None = None
+        # Level refresh after zooming, debounced so a wheel spin requests one render, not twenty.
+        self._level_timer = QTimer(self)
+        self._level_timer.setSingleShot(True)
+        self._level_timer.setInterval(80)
+        self._level_timer.timeout.connect(self._refresh_levels)
+        self.zoom_changed.connect(lambda _z: self._level_timer.start())
+        # Drag frame timing (M2 acceptance: >30 fps).
+        self._frames = FrameStats()
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(500)
+        self._stats_timer.timeout.connect(self._emit_stats)
 
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -91,17 +95,25 @@ class CanvasView(QGraphicsView):
 
     # ------------------------------------------------------------ sync
     def _on_replaced(self) -> None:
-        for item in self._items.values():
-            self._scene.removeItem(item)
-        self._items.clear()
-        self.pixmaps.clear()
+        self._cancel_drag()
+        self.layers.clear()
+        self.service.clear()
         self.sync()
         self.fit()
+
+    def _cancel_drag(self) -> None:
+        d, self._drag = self._drag, None
+        if d is not None:
+            self.layers.end_preview(d.layer_id)
+            self._stats_timer.stop()
+
+    def _refresh_levels(self) -> None:
+        self.layers.set_screen_scale(self.zoom() * self.devicePixelRatioF())
 
     def sync(self) -> None:
         """Bring scene items in line with the document."""
         doc = self.editor.doc
-        self._drag = None  # an undo mid-drag invalidates the drag
+        self._cancel_drag()  # an undo mid-drag invalidates the drag
         canvas = QRectF(0, 0, doc.canvas.w, doc.canvas.h)
         self._canvas_item.setRect(canvas)
         if doc.background is None:
@@ -112,29 +124,8 @@ class CanvasView(QGraphicsView):
         m = max(doc.canvas.w, doc.canvas.h)
         self._scene.setSceneRect(canvas.adjusted(-m, -m, m, m))
 
-        alive = set()
-        for z, layer in enumerate(doc.layers):
-            if not isinstance(layer, ImageLayer):
-                continue
-            alive.add(layer.id)
-            item = self._items.get(layer.id)
-            if item is None:
-                item = QGraphicsPixmapItem()
-                item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-                item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-                self._scene.addItem(item)
-                self._items[layer.id] = item
-            px = layer_source(layer, self.editor.store)
-            pm = self.pixmaps.full((layer.source, layer.crop), px)
-            if item.pixmap().cacheKey() != pm.cacheKey():
-                item.setPixmap(pm)
-            item.setTransform(qtransform(layer.transform, px.shape[1], px.shape[0]))
-            item.setZValue(z)
-            item.setVisible(layer.visible)
-            item.setOpacity(layer.opacity)
-        for lid in list(self._items):
-            if lid not in alive:
-                self._scene.removeItem(self._items.pop(lid))
+        self.layers.screen_scale = self.zoom() * self.devicePixelRatioF()
+        self.layers.sync()
         self.viewport().update()
 
     # ------------------------------------------------------------ zoom
@@ -169,45 +160,16 @@ class CanvasView(QGraphicsView):
     # ------------------------------------------------------------ drawing
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
         doc = self.editor.doc
-        canvas = QRectF(0, 0, doc.canvas.w, doc.canvas.h)
-        outside = QPainterPath()
-        outside.addRect(rect)
-        inside = QPainterPath()
-        inside.addRect(canvas)
-        painter.fillPath(outside.subtracted(inside), QColor(17, 18, 20, 200))
-
-        z = self.zoom()
+        overlay.dim_outside(painter, rect, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
         if self._hover and self._hover != self.editor.selected and self._drag is None:
             hl = self._layer(self._hover)
             if hl is not None:
-                self._draw_quad(painter, hl.transform, *self._size(hl), HOVER, 1.5)
-
+                overlay.quad(painter, hl.transform, *self._size(hl), overlay.HOVER, 1.5)
         layer = self.editor.selected_layer()
-        if layer is None:
-            return
-        w, h = self._size(layer)
-        t = self._drag.current if self._drag and self._drag.layer_id == layer.id else layer.transform
-        self._draw_quad(painter, t, w, h, ACCENT, 2.0)
-        if layer.locked:
-            return
-        painter.setPen(QPen(ACCENT, 1.5 / z))
-        painter.setBrush(QColor("white"))
-        r = 5.5 / z
-        for name, p in H.handle_positions(t, w, h, z).items():
-            if name == H.ROTATE:
-                painter.drawEllipse(QPointF(p[0], p[1]), r * 1.4, r * 1.4)
-                painter.drawArc(QRectF(p[0] - r * 0.7, p[1] - r * 0.7, r * 1.4, r * 1.4), 30 * 16, 270 * 16)
-            elif name in H.CORNERS:
-                painter.drawEllipse(QPointF(p[0], p[1]), r, r)
-            else:
-                painter.drawRoundedRect(QRectF(p[0] - r, p[1] - r, 2 * r, 2 * r), r * 0.4, r * 0.4)
-
-    def _draw_quad(self, painter: QPainter, t: Transform, w: int, h: int, color: QColor, width: float) -> None:
-        pen = QPen(color, width)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in H.quad(t, w, h)]))
+        if layer is not None:
+            live = self._drag is not None and self._drag.layer_id == layer.id
+            t = self._drag.current if live else layer.transform
+            overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked)
 
     # ------------------------------------------------------------ helpers
     def _layer(self, lid: str) -> ImageLayer | None:
@@ -226,9 +188,7 @@ class CanvasView(QGraphicsView):
 
     def _preview(self, t: Transform) -> None:
         d = self._drag
-        item = self._items.get(d.layer_id)
-        if item is not None:
-            item.setTransform(qtransform(t, d.w, d.h))
+        self.layers.preview(d.layer_id, t)
         d.current = t
         self.viewport().update()
 
@@ -244,6 +204,24 @@ class CanvasView(QGraphicsView):
         if ang < 112.5:
             return Qt.CursorShape.SizeVerCursor
         return Qt.CursorShape.SizeBDiagCursor
+
+    # ------------------------------------------------------------ drag performance
+    def _begin_drag(self, d: _Drag) -> None:
+        self._drag = d
+        self._frames.reset()
+        self._stats_timer.start()
+
+    def paintEvent(self, e) -> None:
+        t0 = time.perf_counter()
+        super().paintEvent(e)
+        if self._drag is not None:
+            now = time.perf_counter()
+            self._frames.add(now - t0, now)
+
+    def _emit_stats(self, final: bool = False) -> None:
+        text = self._frames.summary(final)
+        if text:
+            self.frame_stats.emit(text)
 
     # ------------------------------------------------------------ mouse
     def mousePressEvent(self, e) -> None:
@@ -262,16 +240,16 @@ class CanvasView(QGraphicsView):
             handle = H.handle_at(layer.transform, w, h, z, x, y)
             if handle is not None:
                 mode = "rotate" if handle == H.ROTATE else "scale"
-                self._drag = _Drag(mode, layer.id, handle, (x, y), layer.transform, w, h)
+                self._begin_drag(_Drag(mode, layer.id, handle, (x, y), layer.transform, w, h))
                 return
             if H.point_in_layer(layer.transform, w, h, x, y):
-                self._drag = _Drag("move", layer.id, None, (x, y), layer.transform, w, h)
+                self._begin_drag(_Drag("move", layer.id, None, (x, y), layer.transform, w, h))
                 return
         hit = H.layer_at(self.editor.doc, self.editor.store, x, y)
         self.editor.select(hit)
         if hit is not None:
             hl = self._layer(hit)
-            self._drag = _Drag("move", hit, None, (x, y), hl.transform, *self._size(hl))
+            self._begin_drag(_Drag("move", hit, None, (x, y), hl.transform, *self._size(hl)))
 
     def mouseMoveEvent(self, e) -> None:
         if self._pan_from is not None:
@@ -320,9 +298,13 @@ class CanvasView(QGraphicsView):
                 Qt.CursorShape.OpenHandCursor if self._space else Qt.CursorShape.ArrowCursor)
             return
         d, self._drag = self._drag, None
-        if d is not None and d.current != d.t0:
-            text = {"move": "Move", "scale": "Resize", "rotate": "Rotate"}[d.mode]
-            self.editor.push(edits.SetTransform(d.layer_id, d.t0, d.current, text=text))
+        if d is not None:
+            self._stats_timer.stop()
+            self._emit_stats(final=True)
+            if d.current != d.t0:
+                text = {"move": "Move", "scale": "Resize", "rotate": "Rotate"}[d.mode]
+                self.editor.push(edits.SetTransform(d.layer_id, d.t0, d.current, text=text))
+            self.layers.end_preview(d.layer_id)
         self.viewport().update()
 
     def leaveEvent(self, e) -> None:
@@ -353,10 +335,7 @@ class CanvasView(QGraphicsView):
             return
         if key == Qt.Key.Key_Escape:
             if self._drag is not None:  # cancel the drag, restore the item
-                d, self._drag = self._drag, None
-                item = self._items.get(d.layer_id)
-                if item is not None:
-                    item.setTransform(qtransform(d.t0, d.w, d.h))
+                self._cancel_drag()
                 self.viewport().update()
             else:
                 self.editor.select(None)

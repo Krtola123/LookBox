@@ -1,10 +1,11 @@
-"""numpy float32 RGBA → Qt images, with a small cache keyed by asset."""
+"""Layer thumbnails for the layers panel."""
 
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
+
+from lookbox.core.render.levels import thumbnail_array
 
 
 def to_qimage(rgba: np.ndarray) -> QImage:
@@ -15,30 +16,19 @@ def to_qimage(rgba: np.ndarray) -> QImage:
     return img.copy()  # detach from the numpy buffer before it's freed
 
 
-class PixmapCache:
-    """One QPixmap per (asset id, crop). Assets are immutable, so entries never go stale."""
+class ThumbCache:
+    """One thumbnail per (asset id, crop, size). Assets are immutable, so entries never go stale."""
 
     def __init__(self) -> None:
-        self._full: dict[tuple, QPixmap] = {}
         self._thumbs: dict[tuple, QPixmap] = {}
 
     def clear(self) -> None:
-        self._full.clear()
         self._thumbs.clear()
 
-    def full(self, key: tuple, pixels: np.ndarray) -> QPixmap:
-        pm = self._full.get(key)
-        if pm is None:
-            pm = QPixmap.fromImage(to_qimage(pixels))
-            self._full[key] = pm
-        return pm
-
-    def thumb(self, key: tuple, pixels: np.ndarray, size: int) -> QPixmap:
+    def get(self, key: tuple, pixels: np.ndarray, size: int) -> QPixmap:
         k = key + (size,)
         pm = self._thumbs.get(k)
         if pm is None:
-            pm = self.full(key, pixels).scaled(
-                size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            )
+            pm = QPixmap.fromImage(to_qimage(thumbnail_array(pixels, size)))
             self._thumbs[k] = pm
         return pm

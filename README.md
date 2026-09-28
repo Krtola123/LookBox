@@ -28,7 +28,7 @@ pytest
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
 
-## Status: milestone M1
+## Status: milestone M2
 
 | Works | How |
 |---|---|
@@ -44,5 +44,10 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Save / open | Ctrl+S / Ctrl+O — `.lookbox` files keep your original images byte-for-byte (16-bit and EXR included) |
 | Export PNG | Ctrl+E — full resolution, 8-bit with dithering against gradient banding |
 | View | Ctrl+wheel zoom, Space+drag or middle-drag to pan, Ctrl+0 fit, Ctrl+1 100% |
+| Smooth previews | Layers render in the background at the resolution your screen needs and stay sharp as you zoom |
+| Never freezes | Import, open, save and export run in the background; export shows progress and can be cancelled |
+
+**Checking M2 performance:** drag a layer and watch the status bar. It shows the paint cost per frame
+(95th percentile). `OK` means ≤33 ms, i.e. at least 30 fps is sustainable; `SLOW` means it isn't.
 
 Known M1 limitations are listed in the commit message and fixed in later milestones (see ARCHITECTURE §15).

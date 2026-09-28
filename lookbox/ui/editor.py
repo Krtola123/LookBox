@@ -14,8 +14,7 @@ from lookbox.commands import edits
 from lookbox.commands.qt import EditCommand
 from lookbox.core import serialize
 from lookbox.core.assets import AssetStore
-from lookbox.core.io.images import ImageError
-from lookbox.core.model import Document, ImageLayer, Size, Transform
+from lookbox.core.model import AssetInfo, Document, ImageLayer, Size, Transform
 
 
 class Editor(QObject):
@@ -31,12 +30,15 @@ class Editor(QObject):
         self.stack = QUndoStack(self)
         self.path: str | None = None
         self.selected: str | None = None
+        self.generation = 0  # bumps whenever a different document is opened
+        self.revision = 0  # bumps on every edit, undo and redo
 
     # ---- edits ----
     def push(self, edit: edits.Edit) -> None:
         self.stack.push(EditCommand(self.doc, edit, self._after_change))
 
     def _after_change(self) -> None:
+        self.revision += 1
         if self.selected is not None and not self.doc.has_layer(self.selected):
             self.selected = None
             self.selection_changed.emit()
@@ -54,19 +56,12 @@ class Editor(QObject):
         layer = self.doc.layer(self.selected)
         return layer if isinstance(layer, ImageLayer) else None
 
-    # ---- import ----
-    def import_files(self, paths: list[str], at: tuple[float, float] | None = None) -> list[str]:
-        """Add each image as a new layer on top. Returns error messages (empty = all fine)."""
-        errors: list[str] = []
-        infos = []
-        for path in paths:
-            try:
-                infos.append(self.store.add_file(path))
-            except ImageError as exc:
-                errors.append(str(exc))
-        if not infos:
-            return errors
-
+    # ---- import (files are decoded off-thread by ui/jobs.ImportJob) ----
+    def add_imported(self, store: AssetStore, infos: list[AssetInfo],
+                     at: tuple[float, float] | None = None) -> bool:
+        """Add decoded images as layers on top. False if the document changed meanwhile."""
+        if store is not self.store or not infos:
+            return False
         cw, ch = self.doc.canvas.w, self.doc.canvas.h
         bx, by = at if at is not None else (cw / 2.0, ch / 2.0)
         added: list[str] = []
@@ -85,11 +80,12 @@ class Editor(QObject):
         finally:
             self.stack.endMacro()
         self.select(added[-1])
-        return errors
+        return True
 
     # ---- documents ----
     def _replace(self, doc: Document, store: AssetStore, path: str | None) -> None:
         self.doc, self.store, self.path, self.selected = doc, store, path, None
+        self.generation += 1
         self.stack.clear()
         self.stack.setClean()
         self.document_replaced.emit()
@@ -99,16 +95,27 @@ class Editor(QObject):
     def new_document(self, w: int, h: int, background: tuple[float, float, float, float] | None) -> None:
         self._replace(Document(canvas=Size(w=w, h=h), background=background), AssetStore(), None)
 
-    def open(self, path: str) -> None:
-        """Raises serialize.ProjectError with a user-facing message."""
-        doc, store = serialize.load(path)
+    def adopt(self, doc: Document, store: AssetStore, path: str) -> None:
+        """Take over a document loaded off-thread (ui/jobs.OpenJob)."""
         self._replace(doc, store, path)
 
     def save(self, path: str) -> None:
-        """Raises serialize.ProjectError / OSError."""
+        """Blocking save, for the 'save before closing?' prompt. Raises ProjectError / OSError."""
         serialize.save(path, self.doc, self.store)
+        self.finish_save(path, self.save_token())
+
+    def save_token(self) -> tuple[int, int]:
+        """Identifies the exact state being saved, so a background save only marks *that*
+        state clean. (Not the undo index: undo + a new edit can land on the same index.)"""
+        return self.generation, self.revision
+
+    def finish_save(self, path: str, token: tuple[int, int]) -> None:
+        generation, revision = token
+        if generation != self.generation:
+            return  # a different document is open now
         self.path = path
-        self.stack.setClean()
+        if self.revision == revision:
+            self.stack.setClean()  # anything changed during the save keeps the doc dirty
         self.path_changed.emit()
 
     def is_dirty(self) -> bool:

@@ -12,7 +12,7 @@ from lookbox.commands import edits
 from lookbox.core.model import ImageLayer
 from lookbox.core.render.pipeline import layer_source
 from lookbox.ui.editor import Editor
-from lookbox.ui.pixmaps import PixmapCache
+from lookbox.ui.pixmaps import ThumbCache
 
 THUMB = 44
 ID_ROLE = Qt.ItemDataRole.UserRole
@@ -39,7 +39,7 @@ class _Row(QWidget):
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumb.setObjectName("layerThumb")
         px = layer_source(layer, panel.editor.store)
-        thumb.setPixmap(panel.pixmaps.thumb((layer.source, layer.crop), px, THUMB - 4))
+        thumb.setPixmap(panel.thumbs.get((layer.source, layer.crop), px, THUMB - 4))
         lay.addWidget(thumb)
 
         name = QLabel(layer.name)
@@ -65,10 +65,10 @@ class _Row(QWidget):
 
 
 class LayersPanel(QWidget):
-    def __init__(self, editor: Editor, pixmaps: PixmapCache, parent=None) -> None:
+    def __init__(self, editor: Editor, thumbs: ThumbCache, parent=None) -> None:
         super().__init__(parent)
         self.editor = editor
-        self.pixmaps = pixmaps
+        self.thumbs = thumbs
         self._syncing = False
 
         lay = QVBoxLayout(self)

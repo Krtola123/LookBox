@@ -1,19 +1,42 @@
 """Render orchestration (ARCHITECTURE §6.1).
 
-M1 implements the subset of the pipeline that exists so far:
-  source (crop) → opacity → transform → composite (normal)
-The mask/adjust/LUT/blur/fade/effects stages slot in between, in §6.1 order,
-in later milestones. Caching, proxy and the worker thread arrive in M2.
+The pipeline has two halves:
+
+1. `render_layer` — everything that happens to a layer *before* it's placed:
+   source (crop) → [mask → adjust → LUT → blur → fade → effects, as milestones add them].
+   The result is premultiplied, pre-transform, pre-opacity, and cacheable: it
+   depends only on `render_key(layer)` and the resolution `level`.
+2. Placement — opacity → transform → composite. Cheap. On screen, Qt does it
+   (ui/canvas/layer_items.py); for export, `render` below does it in float.
+
+Both halves use the same `layer_matrix`, so preview and export agree on geometry.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
+
+import cv2
 import numpy as np
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, ImageLayer
+from lookbox.core.model import Document, ImageLayer, Layer, layer_to_dict
 from lookbox.core.render import blend
 from lookbox.core.render.transform import warp_to_canvas
+
+# Layer fields that only affect placement, never the pre-transform pixels.
+PLACEMENT_FIELDS = frozenset({"id", "name", "visible", "locked", "opacity", "blend_mode", "transform"})
+
+
+class Cancelled(Exception):
+    pass
+
+
+def _check(cancel: threading.Event | None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise Cancelled()
 
 
 def premultiply(rgba: np.ndarray) -> np.ndarray:
@@ -31,7 +54,7 @@ def unpremultiply(rgba: np.ndarray) -> np.ndarray:
 
 
 def layer_source(layer: ImageLayer, store: AssetStore) -> np.ndarray:
-    """Source pixels with crop applied (read-only view is fine; callers copy)."""
+    """Source pixels with crop applied (read-only; callers copy)."""
     px = store.pixels(layer.source)
     if layer.crop is not None:
         x, y, w, h = layer.crop
@@ -39,10 +62,44 @@ def layer_source(layer: ImageLayer, store: AssetStore) -> np.ndarray:
     return px
 
 
-def render(doc: Document, store: AssetStore, scale: float = 1.0) -> np.ndarray:
-    """Flatten the document. Returns straight-alpha float32 RGBA, 0–1.
+def render_key(layer: Layer) -> str:
+    """Identity of a layer's pre-transform pixels.
 
-    Output size is the canvas × `scale` (rounded).
+    Built from every field except placement ones, so fields added by later
+    milestones (adjust, effects, …) invalidate the cache automatically.
+    """
+    d = {k: v for k, v in layer_to_dict(layer).items() if k not in PLACEMENT_FIELDS}
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
+
+
+def level_size(w: int, h: int, level: float) -> tuple[int, int]:
+    return max(1, round(w * level)), max(1, round(h * level))
+
+
+def render_layer(layer: ImageLayer, store: AssetStore, level: float = 1.0,
+                 cancel: threading.Event | None = None) -> np.ndarray:
+    """Pre-transform, pre-opacity layer pixels at `level` (1 = full res), premultiplied.
+
+    Later stages must scale pixel radii by `level` (§6.3) so every level
+    looks like a downscaled full-res render.
+    """
+    src = layer_source(layer, store)
+    _check(cancel)
+    if level < 1.0:
+        h, w = src.shape[:2]
+        # True area average (not striding): skipping pixels would bring back shimmer.
+        src = cv2.resize(src, level_size(w, h, level), interpolation=cv2.INTER_AREA)
+    _check(cancel)
+    # ---- stages from later milestones slot in here, in §6.1 order ----
+    return premultiply(src)
+
+
+def render(doc: Document, store: AssetStore, scale: float = 1.0,
+           cancel: threading.Event | None = None, progress=None) -> np.ndarray:
+    """Flatten the document in float. Returns straight-alpha float32 RGBA, 0–1.
+
+    Output size is the canvas × `scale` (rounded). `progress(fraction)` is
+    called after each layer; setting `cancel` raises Cancelled.
     """
     out_w = max(1, round(doc.canvas.w * scale))
     out_h = max(1, round(doc.canvas.h * scale))
@@ -51,19 +108,21 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0) -> np.ndarray:
         r, g, b, a = doc.background
         acc[:] = (r * a, g * a, b * a, a)
 
-    for layer in doc.layers:
-        if not layer.visible or layer.opacity <= 0.0:
-            continue
-        if not isinstance(layer, ImageLayer):
-            raise TypeError(f"Can't render layer kind '{layer.kind}' yet.")
-        src = premultiply(layer_source(layer, store))
-        if layer.opacity < 1.0:
-            src *= np.float32(layer.opacity)
-        placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale)
-        if placed is None:
-            continue
-        patch, (x0, y0) = placed
-        ph, pw = patch.shape[:2]
-        blend.composite(acc[y0 : y0 + ph, x0 : x0 + pw], patch, layer.blend_mode)
+    n = max(1, len(doc.layers))
+    for i, layer in enumerate(doc.layers):
+        _check(cancel)
+        if layer.visible and layer.opacity > 0.0:
+            if not isinstance(layer, ImageLayer):
+                raise TypeError(f"Can't render layer kind '{layer.kind}' yet.")
+            src = render_layer(layer, store, 1.0, cancel)
+            if layer.opacity < 1.0:
+                src *= np.float32(layer.opacity)  # after effects: fades the shadow too
+            placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale)
+            if placed is not None:
+                patch, (x0, y0) = placed
+                ph, pw = patch.shape[:2]
+                blend.composite(acc[y0 : y0 + ph, x0 : x0 + pw], patch, layer.blend_mode)
+        if progress is not None:
+            progress((i + 1) / n)
 
     return unpremultiply(acc)

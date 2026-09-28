@@ -45,6 +45,11 @@ def layer_matrix(t: Transform, w: int, h: int) -> np.ndarray:
     )
 
 
+def level_matrix(t: Transform, w: int, h: int, lw: int, lh: int) -> np.ndarray:
+    """Like layer_matrix, for a level image of lw × lh standing in for the w × h layer."""
+    return layer_matrix(t, w, h) @ _scale(w / lw, h / lh)
+
+
 def corners(t: Transform, w: int, h: int) -> np.ndarray:
     """Canvas positions of the layer's corners: TL, TR, BR, BL (4×2)."""
     m = layer_matrix(t, w, h)

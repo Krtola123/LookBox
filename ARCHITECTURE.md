@@ -129,33 +129,43 @@ FillLayer(Layer)
 ### 6.1 Per-layer pipeline (fixed order)
 
 ```
-source (float32 RGBA, crop applied)
+── render_layer(): pre-transform, cacheable (depends only on render_key + level) ──
+source (float32 RGBA, crop applied, area-downscaled to the level)
  → mask multiply (alpha *= mask)
  → adjust (§7, colour channels only)
  → LUT
  → layer blur (gaussian, alpha-aware / premultiplied)
  → fade (alpha *= gradient)
- → opacity (alpha *= opacity)
- → effects (§8): shadow and glow are generated from the final alpha and drawn BEHIND the layer; outline is drawn around it
+ → effects (§8): shadow and glow are generated from the alpha and drawn BEHIND the layer; outline is drawn around it
+── placement: cheap, never cached ──
+ → opacity (whole result × opacity, so fading a layer fades its shadow too, as in Canva/Photoshop)
  → transform (affine warp into canvas space, bilinear/area filtering)
  → composite onto the stack using the layer's blend_mode
 ```
 
 After all layers: `global_adjust` → `global_lut` → output.
 
-### 6.2 Caching
-- Each layer caches its pre-transform result, keyed by a hash of (source id, all params that affect it, proxy scale).
-- Moving or rotating a layer must NOT invalidate its adjust/effects cache. Only the transform and composite re-run.
-- The cache is an LRU with a memory budget (default 4 GB, a setting).
+*Changed in M2:* opacity moved after effects (it used to sit before them).
 
-### 6.3 Preview proxy
-- Interactive rendering happens at **proxy resolution**: the canvas downscaled so its longest side ≤ viewport size × devicePixelRatio (cap 2048).
-- Radius-based parameters (blur, shadow blur, clarity, sharpness, glow) are specified in **full-resolution pixels** and scaled by the proxy factor at render time, so the preview matches the export.
-- Export renders at full resolution in a worker with a progress bar.
+### 6.2 Caching
+- Each layer caches its `render_layer` result, keyed by `(render_key(layer), level)`. `render_key` hashes every layer field **except** placement ones (id, name, visible, locked, opacity, blend_mode, transform), so new fields invalidate the cache automatically.
+- Moving, rotating, hiding or fading a layer never re-renders it.
+- The cache is an LRU with a byte budget (default 4 GB, becomes a setting), storing display-ready uint8 BGRA.
+
+### 6.3 Preview levels (replaces the M1 "whole-canvas proxy" plan)
+- Measured in M2: compositing the whole canvas on the CPU at proxy size costs ~120 ms/frame, which is far too slow for dragging. So the preview is split:
+  - **Per layer, off-thread:** `render_layer` at a power-of-two **level**, the smallest one ≥ the layer's on-screen scale (`zoom × layer scale × devicePixelRatio`). The display never downsamples a level by more than 2×, so there's no shimmer.
+  - **On screen, Qt:** each level is a `QGraphicsPixmapItem` placed with `level_matrix` (same matrix as export) and composited by QPainter. Blend modes will use QPainter composition modes (M4).
+- While a level renders, the closest cached level stays on screen.
+- Radius-based parameters (blur, shadow blur, clarity, sharpness, glow) are specified in **full-resolution pixels** and scaled by the level at render time, so every level looks like a downscaled export.
+- **Export** renders everything in float at full resolution (`pipeline.render`), in a cancellable worker with progress. Export is the ground truth; the preview is 8-bit.
+- *Known future issue:* `global_adjust`/`global_lut` (M10) act on the flattened image, which the Qt composite doesn't have. Plan: preview them with a worker-rendered composite at screen resolution that updates after each change, keeping the Qt composite during drags.
 
 ### 6.4 Threading
-- One render worker (`QThread`). The UI posts render requests; any queued request is replaced by the newest one.
-- Slider drags are debounced (~30 ms) and render at proxy resolution. The final full-quality proxy render happens on release.
+- Layer renders run in a `QThreadPool` (cores − 2 threads), one job per (layer, level). Results reach the UI thread via queued signals; stale results just sit in the cache.
+- Import decoding, project open/save and export are `QThread` jobs (`ui/jobs.py`). Each snapshots what it needs.
+- A background save marks the document clean only if nothing changed while it ran (revision counter, not undo index).
+- Slider drags are debounced (~30 ms). The canvas reports drag paint cost in the status bar (M2 acceptance readout).
 
 ### 6.5 Colour handling (pragmatic, not colour-managed)
 - The working space is **display-referred sRGB-encoded float32**. The adjust math in §7 is designed for this.
@@ -306,7 +316,8 @@ lookbox/
     assets.py             # content-addressed AssetStore (original bytes + decoded pixels)
     serialize.py          # .lookbox read/write + migrations
     render/
-      pipeline.py         # §6.1 orchestration
+      pipeline.py         # §6.1 orchestration: render_layer, render_key, render (export)
+      levels.py           # preview level choice, display quantize, thumbnails
       adjust.py           # §7, one function per control
       effects.py          # §8
       blend.py
@@ -329,10 +340,17 @@ lookbox/
     edits.py              # plain-Python edits (apply/revert), Qt-free, unit-tested
     qt.py                 # QUndoCommand adapter around edits
   ui/
-    main_window.py
+    main_window.py        # layout + wiring only
+    documents.py          # new/open/save/import/export flows
     editor.py             # open doc + assets + QUndoStack + selection; the UI's single entry point
-    jobs.py               # background workers (export, …)
+    jobs.py               # background workers (import, open, save, export)
+    render_service.py     # thread pool + LRU cache for per-layer preview levels
+    pixmaps.py            # layer thumbnails
     canvas/               # QGraphicsView, items, handles, mask overlay
+      view.py             # mouse/keyboard/zoom
+      layer_items.py      # one pixmap item per layer, level choice, placement
+      overlay.py          # selection box, handles, dimmed outside
+      frame_stats.py      # drag frame timing (Qt-free)
       handles.py          # handle/drag/hit-test geometry — kept Qt-free so it's testable
     panels/               # adjust, effects, filters, position, layers, text
     widgets/              # slider-with-number, colour picker, gradient editor
@@ -365,7 +383,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | # | Milestone | Done when |
 |---|---|---|
 | M1 | Skeleton: window, canvas, import image, ImageLayer, move/scale/rotate handles, layers list, undo/redo, save/load `.lookbox`, PNG export | Import 3 images, arrange them, undo 20 steps, save, reopen, export; everything is identical |
-| M2 | Render pipeline + proxy + worker thread + cache | Dragging a layer on a 6000×4000 canvas stays smooth (>30 fps) on the Ryzen 3600 |
+| M2 | Render pipeline + preview levels + workers + cache | Dragging a layer on a 6000×4000 canvas stays smooth: the status bar readout shows ≤33 ms/frame ("OK") on the Ryzen 3600 |
 | M3 | Adjust panel (§7) + golden tests | All 15 controls work, previews match exports, golden tests pass |
 | M4 | Fill layers (solid/gradient), gradient fade, blend modes | A backdrop gradient with no visible banding after 8-bit export |
 | M5 | Effects: shadow, glow, outline, blur | The shadow follows the layer when moved, with no re-blur on move |
