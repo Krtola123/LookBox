@@ -12,7 +12,9 @@ from lookbox.core.model import FillLayer, Transform
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
+from lookbox.ui.cutout import CutoutController
 from lookbox.ui.panels.adjust import AdjustPanel
+from lookbox.ui.panels.cutout import CutoutSection
 from lookbox.ui.panels.layer_style import LayerPanel
 from lookbox.ui.panels.layers import LayersPanel
 from lookbox.ui.pixmaps import ThumbCache
@@ -140,7 +142,11 @@ class MainWindow(QMainWindow):
     def _build_panel(self) -> None:
         tabs = QTabWidget()
         tabs.setObjectName("contextPanel")
-        self.adjust_panel = AdjustPanel(self.editor)
+        self.docs.before_discard = lambda: self.canvas.brush.finish(apply=True)
+        self.cutout = CutoutController(self, self.editor)
+        self.cutout.status.connect(self._show_status)
+        cut_section = CutoutSection(self.editor, self.cutout, self.canvas.brush)
+        self.adjust_panel = AdjustPanel(self.editor, cut_section)
         self.adjust_panel.interactive.connect(self.canvas.layers.set_interactive)
         self.adjust_panel.compare.connect(self.canvas.layers.set_bypass)
         self.layer_panel = LayerPanel(self.editor)
@@ -224,9 +230,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.canvas.fit)  # viewport has its real size only now
 
     def closeEvent(self, e) -> None:
-        if not self.docs.confirm_discard():
+        if not self.docs.confirm_discard():  # applies an open brush session first (before_discard)
             e.ignore()
             return
+        self.cutout.shutdown()
         self.docs.wait_all()  # an in-flight save must land before we exit
         self.renderer.shutdown()
         e.accept()

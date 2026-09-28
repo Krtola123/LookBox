@@ -82,6 +82,7 @@ class LayerItems(QObject):
         self._live: dict[str, Transform] = {}  # transforms being dragged, not yet in the document
         self._interactive: set[str] = set()  # layers whose sliders are being dragged: half-res previews
         self._bypass: str | None = None  # layer shown "before" (adjustments off), view-only
+        self._mask_bypass: str | None = None  # layer shown without its mask (mask brush), view-only
         service.ready.connect(self._on_ready)
 
     # ---- public ----
@@ -89,6 +90,7 @@ class LayerItems(QObject):
         self._live.clear()
         self._interactive.clear()
         self._bypass = None
+        self._mask_bypass = None
         for e in self.entries.values():
             self.scene.removeItem(e.item)
         self.entries.clear()
@@ -160,6 +162,12 @@ class LayerItems(QObject):
         for lid in {old, layer_id} - {None}:
             self._refresh_one(lid)
 
+    def set_mask_bypass(self, layer_id: str | None) -> None:
+        """Show `layer_id` without its mask while the mask brush is active (None = normal)."""
+        old, self._mask_bypass = self._mask_bypass, layer_id
+        for lid in {old, layer_id} - {None}:
+            self._refresh_one(lid)
+
     def _refresh_one(self, layer_id: str) -> None:
         doc = self.editor.doc
         e = self.entries.get(layer_id)
@@ -173,7 +181,9 @@ class LayerItems(QObject):
     def _effective(self, layer: Layer) -> Layer:
         """The layer as it should be *shown* (before/after bypass drops adjustments)."""
         if layer.id == self._bypass and not layer.adjust.is_identity():
-            return replace(layer, adjust=Adjustments())
+            layer = replace(layer, adjust=Adjustments())
+        if layer.id == self._mask_bypass and layer.mask is not None:
+            layer = replace(layer, mask=None)
         return layer
 
     def _transform_of(self, layer: Layer) -> Transform:

@@ -1,0 +1,29 @@
+{
+  "_comment": "Model sources, sizes and sha256 (ARCHITECTURE §10.2). Values verified from the Git LFS pointers on Hugging Face (M6). Downloads that don't match are rejected.",
+  "models": {
+    "birefnet": {
+      "name": "Best quality",
+      "task": "background",
+      "url": "https://huggingface.co/onnx-community/BiRefNet-ONNX/resolve/main/onnx/model.onnx",
+      "source": "https://huggingface.co/onnx-community/BiRefNet-ONNX",
+      "filename": "birefnet.onnx",
+      "sha256": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+      "size": 972666916,
+      "input_size": 1024,
+      "mean": [0.485, 0.456, 0.406],
+      "std": [0.229, 0.224, 0.225]
+    },
+    "birefnet-lite": {
+      "name": "Fast",
+      "task": "background",
+      "url": "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx",
+      "source": "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX",
+      "filename": "birefnet-lite.onnx",
+      "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+      "size": 224005088,
+      "input_size": 1024,
+      "mean": [0.485, 0.456, 0.406],
+      "std": [0.229, 0.224, 0.225]
+    }
+  }
+}

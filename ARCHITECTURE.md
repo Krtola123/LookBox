@@ -243,15 +243,17 @@ All selection tools produce a **float32 mask** at the layer's source resolution.
 | Lasso | Polygonal (click points) and freehand (drag). Rasterize with anti-aliasing |
 | Smart select (SAM) | Positive clicks, negative clicks, or a box. Decoder reruns on each click. See §10 |
 | Remove background | One click. Whole-image subject mask (§10) |
-| Mask brush | Paint add/subtract with a soft round brush of variable size. **Required**: AI masks are never perfect |
+| Mask brush | Paint erase/restore with a soft round brush (size in canvas px, hardness). Works with or without an AI mask (no mask = start fully visible: a manual cut-out). **Required**: AI masks are never perfect |
 
-**Mask refinement** (applies to any mask): invert, feather (blur), grow/shrink (morphology), smooth, refine edge (guided filter against the source image).
+**Storage (M6):** `Layer.mask = LayerMask(asset, shift, feather, invert)`. The mask image is its own asset (16-bit greyscale PNG, same size as the full source); edge controls are live, in source px, scaled by the preview level, and never baked in.
+
+**Mask refinement:** invert, feather, grow/shrink ("edge shift") are live controls. Refine edge (guided filter against the photo) is optional at removal time, off by default: measured in M6, it makes clean edges slightly *worse* (copies photo noise into the mask) and is only worth trying on hair/fur.
 
 **Actions on a mask:**
 - *Apply as layer mask* (non-destructive; this is "remove background").
 - *Extract to new layer*: a new ImageLayer referencing the **same source asset** with the mask applied. The original stays untouched underneath. This is our "Magic Grab". The hole is not filled (non-goal).
 
-The mask edit UI is a mode: the canvas shows a red overlay on masked-out areas, with Done and Cancel buttons.
+The mask edit UI is a mode: the layer shows unmasked, a red overlay marks hidden areas, Done/Cancel (Enter/Esc), Alt flips erase/restore, [ ] resize. One brush session = one undo step. Switching layers applies the session; so does New/Open/Close (before the save prompt, so painting is never lost silently).
 
 ---
 
@@ -266,19 +268,20 @@ class OnnxModel(Protocol):
     def unload(self) -> None: ...
     def run(self, inputs, progress: Callable[[float], None], cancel: Event) -> Any: ...
 ```
-A `ModelManager` owns the sessions. It loads lazily, and in **low-VRAM mode** (auto-detected when VRAM < 6 GB, overridable in Settings) it unloads other models before loading a new one. If creating a DirectML session fails, it retries on CPU and shows a one-line notice.
+As built (M6, `ai/runtime.py`): a `ModelManager` keeps **at most one** model loaded (loading one frees the previous, which suits 4 GB cards), creates sessions lazily with DirectML → CPU fallback, and also falls back to the CPU if the *first GPU run* fails (e.g. out of VRAM), with a one-line notice. Models are plain functions over it (`birefnet.remove_background(run, …)`), so they're testable with a stand-in `run`. Instead of VRAM auto-detection (no dependency-free way on Windows), the user picks the model size once: Best quality (973 MB) or Fast (224 MB).
 
 ### 10.2 Models
 | Feature | Model | Notes |
 |---|---|---|
-| Remove background | BiRefNet (general; lite variant in low-VRAM mode), ONNX | Input 1024×1024. Upsample the mask to source size, then refine edge with a guided filter |
+| Remove background | BiRefNet (onnx-community exports): "Best quality" = BiRefNet-ONNX (973 MB), "Fast" = BiRefNet_lite-ONNX (224 MB), fp32 | Input 1024×1024 RGB, /255, ImageNet mean/std (per the export's preprocessor_config.json). Output logits or probabilities, detected; sigmoid only when needed. Bilinear upsample to source size; refine edge optional (§9) |
 | Smart select | SAM 2.1 (tiny or small), ONNX encoder + decoder | Run the encoder **once per image** and cache the embedding by asset hash. The decoder is fast; rerun it per click |
 | Upscale | Real-ESRGAN x4plus, ONNX | Tiled: 512 px tiles on ≥6 GB, 256 px in low-VRAM mode, 16 px overlap, feathered blend. Alpha is upscaled separately (bicubic) |
 
-Model sources, filenames, sizes and sha256 values live in `models/models.json`, **not in code**. At build time, verify that the ONNX exports exist and work on DirectML before committing to one. Export from PyTorch yourself if necessary (a dev-only script in `tools/`).
+Model sources, filenames, sizes and sha256 values live in `lookbox/models/models.json`, **not in code** (M6 values taken from the Git LFS pointers). At build time, verify that the ONNX exports exist and work on DirectML before committing to one. Export from PyTorch yourself if necessary (a dev-only script in `tools/`).
 
 ### 10.3 Delivery
-- Models download on first use into `%LOCALAPPDATA%\LookBox\models\`, verified by sha256, with a progress dialog and a cancel button.
+- Models download on first use into `%LOCALAPPDATA%\LookBox\models\` (override: `LOOKBOX_MODELS_DIR`), streamed and verified by size + sha256, with a progress dialog and a cancel button. Only a verified file takes the final name; failures leave nothing behind. A `.verified` marker avoids re-hashing ~1 GB each launch.
+- Runtime dependency: `onnxruntime-directml` on Windows (`onnxruntime` elsewhere). `run.bat` reinstalls requirements whenever requirements.txt changes.
 - The app works fully without any model downloaded. AI buttons show "Download model (xx MB)".
 
 ---
@@ -343,17 +346,19 @@ lookbox/
       lut.py
       cache.py
     masks/
-      ops.py              # feather, grow, refine edge, ...
-      idpick.py
-      lasso.py
+      ops.py              # mask storage, grow/shrink, feather, refine edge, brush stamping
+      idpick.py           # (M8)
+      lasso.py            # (M8)
     io/
       images.py           # load/save, EXR handling, dither
       render_sets.py      # pass detection
-  ai/
-    manager.py
-    birefnet.py
-    sam.py
-    esrgan.py
+  ai/                     # Qt-free
+    registry.py           # models.json, verified downloads
+    runtime.py            # onnxruntime sessions, DirectML → CPU fallback, one model loaded
+    birefnet.py           # background removal pre/post-processing
+    sam.py                # (M9)
+    esrgan.py             # (M11)
+  models/models.json      # model urls, sizes, sha256
   commands/               # the ONLY code that mutates a Document
     edits.py              # plain-Python edits (apply/revert), Qt-free, unit-tested
     qt.py                 # QUndoCommand adapter around edits
@@ -363,17 +368,20 @@ lookbox/
     editor.py             # open doc + assets + QUndoStack + selection; the UI's single entry point
     jobs.py               # background workers (import, open, save, export)
     render_service.py     # thread pool + LRU cache for per-layer preview levels
+    cutout.py             # remove-background flow (model choice, download, run, apply)
+    ai_jobs.py            # download + inference threads
     pixmaps.py            # layer thumbnails
-    panels/               # adjust.py (+ color_edit.py), layer_style.py (+ effects.py), layers.py; later: filters, text
+    panels/               # adjust.py (+ color_edit.py, cutout.py), layer_style.py (+ effects.py), layers.py; later: filters, text
     widgets/              # slider_row.py, colour_button.py; later: gradient editor
     canvas/               # QGraphicsView, items, handles, mask overlay
       view.py             # mouse/keyboard/zoom
       layer_items.py      # one pixmap item per layer, level choice, placement
       overlay.py          # selection box, handles, dimmed outside
       frame_stats.py      # drag frame timing (Qt-free)
+      mask_brush.py       # mask painting mode + red overlay
+      file_drop.py        # drag files in from Explorer
       handles.py          # handle/drag/hit-test geometry — kept Qt-free so it's testable
     theme.qss
-  models/models.json
   luts/                   # bundled .cube files
 tests/
   golden/                 # reference data (adjust_<control>.npz); regenerate: pytest --update-golden
@@ -405,9 +413,9 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M3 | Adjust panel (§7) + golden tests | All 15 controls work, previews match exports, golden tests pass |
 | M4 | Fill layers (solid/gradient), gradient fade, blend modes | A backdrop gradient with no visible banding after 8-bit export |
 | M5 | Effects: shadow, glow, outline, blur | The shadow follows the layer when moved, with no re-blur on move |
-| M6 | Text layers | Edit text in place, with shadow and outline applied |
-| M7 | Render-set import + ID pick + lasso + mask brush + mask refinement + extract to layer | Pick an object from a Toolbag ID pass and extract it to a layer with a clean edge |
-| M8 | AI infrastructure + background removal | Works on the RTX 4060 and on CPU fallback; model download flow works |
+| M6 | *(pulled forward)* AI infrastructure + background removal + layer masks + mask brush + edge controls + extract to layer | Remove the background of a photo on the RTX 4060 (and CPU fallback); download flow verifies the model; fix an edge with the brush; extract to a new layer |
+| M7 | Text layers | Edit text in place, with shadow and outline applied |
+| M8 | Render-set import + ID pick + lasso | Pick an object from a Toolbag ID pass and extract it to a layer with a clean edge |
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |

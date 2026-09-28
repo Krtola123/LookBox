@@ -42,9 +42,10 @@ class AdjustPanel(QWidget):
     interactive = Signal(str, bool)  # layer id, slider being dragged
     compare = Signal(object)  # layer id to show "before", or None
 
-    def __init__(self, editor: Editor, parent: QWidget | None = None) -> None:
+    def __init__(self, editor: Editor, cutout: QWidget | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = editor
+        self.cutout = cutout  # the Cut-out section (M6), shown at the top of the body
         self._layer_id: str | None = None
         self._dragging = False
         self._drag_serial = 0
@@ -83,6 +84,8 @@ class AdjustPanel(QWidget):
         col = QVBoxLayout(body)
         col.setContentsMargins(16, 4, 16, 16)
         col.setSpacing(6)
+        if cutout is not None:
+            col.addWidget(cutout)
         self.rows: dict[str, SliderRow] = {}
         for group, rows in GROUPS:
             head = QHBoxLayout()
@@ -150,12 +153,16 @@ class AdjustPanel(QWidget):
         self.compare_btn.setEnabled(layer is not None)
         if layer is not None:
             self.color_edit.set_source(layer_source(layer, self.editor.store), layer.adjust.color_edit)
+        if self.cutout is not None:
+            self.cutout.set_layer(self._layer_id)
         self.refresh()
 
     def refresh(self) -> None:
         layer = self._layer()
         if layer is None:
             return
+        if self.cutout is not None:
+            self.cutout.refresh()
         a = layer.adjust
         for key, row in self.rows.items():
             if not (self._dragging and key in self._pending):  # don't fight the hand on the slider

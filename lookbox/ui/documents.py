@@ -30,6 +30,7 @@ class DocumentActions(QObject):
         self.export_job: ExportJob | None = None
         self.save_job: SaveJob | None = None
         self.open_job: OpenJob | None = None
+        self.before_discard = None  # callable run before asking to save (set by MainWindow)
 
     # ------------------------------------------------------------ helpers
     def _error(self, title: str, message: str) -> None:
@@ -56,6 +57,8 @@ class DocumentActions(QObject):
 
     def confirm_discard(self) -> bool:
         """True if it's OK to throw away the current document."""
+        if self.before_discard is not None:
+            self.before_discard()  # e.g. apply an open brush session so the prompt covers it
         if not self.editor.is_dirty():
             return True
         r = QMessageBox.question(

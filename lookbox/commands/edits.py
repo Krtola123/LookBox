@@ -226,3 +226,76 @@ class SetLayerField(Edit):
             return False
         self.new = copy.deepcopy(newer.new)
         return True
+
+
+class SetMask(Edit):
+    """Set, change or remove a layer's mask. A new mask image arrives as `asset`
+    (added to the document if it isn't there yet; taken out again on undo).
+    Edge-slider drags pass a merge_key and no asset, so one drag = one undo step."""
+
+    def __init__(self, layer_id: str, old, new, asset: AssetInfo | None = None, text: str = "Mask",
+                 merge_key: str | None = None) -> None:
+        self.layer_id = layer_id
+        self.old, self.new = copy.deepcopy(old), copy.deepcopy(new)
+        self.asset, self.text, self.merge_key = asset, text, merge_key
+        self._added_asset = False
+
+    def apply(self, doc: Document) -> None:
+        layer = doc.layer(self.layer_id)
+        if self.new is not None and layer.kind != "image":
+            raise ValueError("Only image layers can have a mask.")
+        if self.asset is not None and self.asset.id not in doc.assets:
+            doc.assets[self.asset.id] = self.asset
+            self._added_asset = True
+        layer.mask = copy.deepcopy(self.new)
+
+    def revert(self, doc: Document) -> None:
+        doc.layer(self.layer_id).mask = copy.deepcopy(self.old)
+        if self._added_asset:
+            del doc.assets[self.asset.id]
+            self._added_asset = False
+
+    def merge(self, newer: Edit) -> bool:
+        if not (isinstance(newer, SetMask) and newer.layer_id == self.layer_id
+                and newer.asset is None and self.asset is None):
+            return False
+        self.new = copy.deepcopy(newer.new)
+        return True
+
+
+class Batch(Edit):
+    """Several edits as one undo step (applied in order, reverted in reverse)."""
+
+    def __init__(self, parts: list[Edit], text: str) -> None:
+        self.parts, self.text = parts, text
+
+    def apply(self, doc: Document) -> None:
+        done = []
+        try:
+            for part in self.parts:
+                part.apply(doc)
+                done.append(part)
+        except Exception:
+            for part in reversed(done):  # leave the document exactly as it was
+                part.revert(doc)
+            raise
+
+    def revert(self, doc: Document) -> None:
+        for part in reversed(self.parts):
+            part.revert(doc)
+
+
+def extract_to_layer(doc: Document, layer_id: str) -> Batch:
+    """'Keep the thing': a copy of the layer *with* its mask goes on top as a new layer,
+    and the original goes back to showing everything (§9 "Extract to new layer")."""
+    from lookbox.core.model import new_id
+
+    src = doc.layer(layer_id)
+    if src.mask is None:
+        raise ValueError("This layer has no cut-out to extract.")
+    cut = copy.deepcopy(src)
+    cut.id = new_id()
+    cut.name = f"{src.name} cut-out"
+    cut.locked = False
+    return Batch([AddLayer(cut, index=doc.layer_index(layer_id) + 1),
+                  SetMask(layer_id, src.mask, None)], text="Extract to new layer")

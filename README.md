@@ -19,6 +19,9 @@ python -m lookbox
 
 You can pass files: `python -m lookbox scene.lookbox` or `python -m lookbox a.png b.png`.
 
+**After pulling M6**, start with `run.bat` as usual: it notices the new requirements and installs
+`onnxruntime-directml` (the AI runtime) automatically.
+
 ## Tests
 
 ```bat
@@ -28,7 +31,7 @@ pytest
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
 
-## Status: milestone M5
+## Status: milestone M6
 
 | Works | How |
 |---|---|
@@ -51,6 +54,9 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Backdrop | **Backdrop** button (Ctrl+B) adds a gradient behind everything. **Style** tab: solid / linear / radial, two colours (with alpha), angle, centre, size, Fit to canvas |
 | Opacity & blend modes | **Style** tab, any layer: Opacity, Blend mode (Normal, Multiply, Screen, Overlay, Add, Soft light) |
 | Gradient fade | **Style** tab, any layer: fade to transparent, linear or radial, with direction, start, end, invert |
+| Remove background | **Adjust** tab → Cut-out → **Remove background**. First time: pick *Best quality* (973 MB, for 8 GB+ GPUs) or *Fast* (224 MB), downloaded once and checked against its published checksum. Runs on your GPU (DirectML), or the CPU if that fails. Non-destructive: it adds a layer mask |
+| Fix the cut-out | **Edge shift** and **Feather** sliders, **Invert**, and **Brush…**: paint Erase/Restore on the canvas (red = hidden; Alt flips the mode, [ ] size, Enter done, Esc cancel). No AI needed: **Cut out by hand…** starts from a fully visible layer |
+| Keep the thing | **Extract to new layer**: the cut-out goes on its own layer above; the original shows everything again |
 | Effects | **Style** tab: Shadow (direction, distance, blur, spread, floor squash, colour; presets **Soft drop** and **Contact shadow**), Glow, Outline (outside/centre), Layer blur. Sizes are canvas pixels and the shadow direction stays put when you rotate or resize the layer |
 
 **Tips:** blend modes preview against the checkerboard on a transparent canvas; add a backdrop

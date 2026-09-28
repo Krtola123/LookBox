@@ -160,3 +160,17 @@ def test_snap_point_for_resize():
     assert (x, y) == (1000, 403)  # an edge handle only moves x
     x, y, g = H.snap_point(Transform(rotation_deg=30), "se", 996, 403, targets, zoom=1.0)
     assert (x, y, g) == (996, 403, [])  # off-axis rotation: no resize snapping
+
+
+def test_canvas_to_source_for_brushing_handles_scale_rotation_and_crop():
+    doc = Document(canvas=Size(w=400, h=400))
+    from lookbox.core.model import AssetInfo
+    doc.assets["a"] = AssetInfo(id="a", ext=".png", width=200, height=100)
+    layer = ImageLayer(id="L", source="a", transform=Transform(x=200, y=200, scale_x=2, scale_y=2))
+    assert np.allclose(H.canvas_to_source(doc, layer, 200, 200), (100, 50))  # centre → centre
+    assert np.allclose(H.canvas_to_source(doc, layer, 0, 100), (0, 0))  # top-left corner
+    layer.crop = (50, 20, 100, 60)  # 100×60 window starting at (50, 20)
+    assert np.allclose(H.canvas_to_source(doc, layer, 200, 200), (100, 50))  # crop centre = (50+50, 20+30)
+    layer.transform.rotation_deg = 90
+    x, y = H.canvas_to_source(doc, layer, 200 + 2 * 10, 200)  # 10 source px "down" after rotating 90°
+    assert np.allclose((x, y), (100, 40))

@@ -144,3 +144,9 @@ QToolButton#colourButton:hover { border-color: #8b3dff; }
 /* ---- Effects (M5) ---- */
 QCheckBox#effectToggle { background: transparent; font-weight: 600; spacing: 8px; padding-top: 4px; }
 QPushButton#presetButton { padding: 4px 8px; font-size: 12px; }
+
+/* ---- Cut-out (M6) ---- */
+QPushButton#primaryPush { background: #8b3dff; border-color: #8b3dff; color: white; font-weight: 600; }
+QPushButton#primaryPush:hover { background: #9a55ff; }
+QPushButton#primaryPush:disabled { background: #3b2c5c; border-color: #3b2c5c; color: #9a93ad; }
+QPushButton:checked { background: #33245a; border-color: #8b3dff; color: #ffffff; }

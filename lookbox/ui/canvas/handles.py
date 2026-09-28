@@ -248,3 +248,12 @@ def snap_point(t: Transform, handle: str, x: float, y: float, targets: tuple[lis
         y += dy
         guides += [("h", v) for v in ty]
     return x, y, guides
+
+
+def canvas_to_source(doc: Document, layer: ImageLayer, x: float, y: float) -> tuple[float, float]:
+    """Canvas point → pixel coordinates in the layer's full (uncropped) source image."""
+    w, h = layer_size(doc, layer)
+    lx, ly = canvas_to_local(layer.transform, w, h, x, y)
+    if layer.crop is not None:
+        lx, ly = lx + layer.crop[0], ly + layer.crop[1]
+    return lx, ly

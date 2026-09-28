@@ -25,6 +25,7 @@ from lookbox.core.assets import AssetStore
 from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, layer_to_dict
 from dataclasses import dataclass
 
+from lookbox.core.masks import ops as mask_ops
 from lookbox.core.render import adjust, blend, effects, fill
 from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
 from lookbox.core.render.transform import warp_to_canvas
@@ -103,6 +104,16 @@ def _base_pixels(layer: Layer, store: AssetStore, level: float) -> np.ndarray:
             h, w = src.shape[:2]
             # True area average (not striding): skipping pixels would bring back shimmer.
             src = cv2.resize(src, level_size(w, h, level), interpolation=cv2.INTER_AREA)
+        if layer.mask is not None:  # §6.1: mask first, before adjust
+            m = layer.mask
+            full = mask_ops.mask_from_pixels(store.pixels(m.asset))
+            if layer.crop is not None:
+                x, y, cw, ch = layer.crop
+                full = full[y:y + ch, x:x + cw]
+            mask = mask_ops.mask_at_level(np.ascontiguousarray(full), (src.shape[1], src.shape[0]),
+                                          level, m.shift, m.feather, m.invert)
+            src = src.copy()
+            src[:, :, 3] *= mask
         return src
     raise TypeError(f"Can't render layer kind '{layer.kind}'.")
 

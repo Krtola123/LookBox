@@ -58,3 +58,13 @@ def guides(painter: QPainter, lines: list[tuple[str, float]], canvas: QRectF) ->
             painter.drawLine(QPointF(v, canvas.top()), QPointF(v, canvas.bottom()))
         else:
             painter.drawLine(QPointF(canvas.left(), v), QPointF(canvas.right(), v))
+
+
+def brush_cursor(painter: QPainter, x: float, y: float, radius: float) -> None:
+    """Brush outline, readable on light and dark images (dark ring + white ring)."""
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for colour, width in ((QColor(0, 0, 0, 160), 3.0), (QColor(255, 255, 255, 230), 1.2)):
+        pen = QPen(colour, width)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.drawEllipse(QPointF(x, y), radius, radius)

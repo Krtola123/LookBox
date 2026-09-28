@@ -85,7 +85,7 @@ def needs_dither(layer, level: float) -> bool:
     from lookbox.core.model import ImageLayer  # local: keeps this module's imports light
 
     return not (isinstance(layer, ImageLayer) and level >= 1.0 and layer.adjust.is_identity()
-                and layer.fade is None)
+                and layer.fade is None and layer.mask is None)
 
 
 def thumbnail_array(px: np.ndarray, size: int) -> np.ndarray:

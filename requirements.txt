@@ -1,3 +1,6 @@
 PySide6>=6.7
 numpy>=1.26
 opencv-python>=4.9
+# AI features (M6+). DirectML runs on any DirectX 12 GPU (NVIDIA, AMD, Intel) on Windows.
+onnxruntime-directml>=1.17; sys_platform == "win32"
+onnxruntime>=1.17; sys_platform != "win32"

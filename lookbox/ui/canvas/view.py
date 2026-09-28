@@ -20,7 +20,9 @@ from lookbox.core.model import Layer, Transform
 from lookbox.ui.canvas import handles as H
 from lookbox.ui.canvas import overlay
 from lookbox.ui.canvas.frame_stats import FrameStats
+from lookbox.ui.canvas.file_drop import FileDropMixin
 from lookbox.ui.canvas.layer_items import LayerItems
+from lookbox.ui.canvas.mask_brush import MaskBrush
 from lookbox.ui.editor import Editor
 from lookbox.ui.render_service import RenderService
 
@@ -45,7 +47,7 @@ class _Drag:
         self.current = t0
 
 
-class CanvasView(QGraphicsView):
+class CanvasView(FileDropMixin, QGraphicsView):
     zoom_changed = Signal(float)
     files_dropped = Signal(list, object)  # paths, (x, y) canvas point
     frame_stats = Signal(str)  # drag performance readout for the status bar
@@ -56,6 +58,9 @@ class CanvasView(QGraphicsView):
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self.layers = LayerItems(self._scene, service, editor)
+        self.brush = MaskBrush(self)  # mask-painting mode (M6); routes mouse/keys while active
+        self._cursor_pt: tuple[float, float] | None = None
+        self._stroking = False
         self.service = service
         self._canvas_item = QGraphicsRectItem()
         self._canvas_item.setPen(Qt.PenStyle.NoPen)
@@ -175,6 +180,8 @@ class CanvasView(QGraphicsView):
             overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked)
         if self._guides:
             overlay.guides(painter, self._guides, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
+        if self.brush.active and self._cursor_pt is not None:
+            overlay.brush_cursor(painter, *self._cursor_pt, self.brush.size / 2.0)
 
     # ------------------------------------------------------------ helpers
     def _layer(self, lid: str) -> Layer | None:
@@ -237,6 +244,10 @@ class CanvasView(QGraphicsView):
         if e.button() != Qt.MouseButton.LeftButton:
             return
         x, y = self._scene_pt(e)
+        if self.brush.active:
+            self.brush.paint(x, y, first=True, flip_mode=bool(e.modifiers() & Qt.KeyboardModifier.AltModifier))
+            self._stroking = True
+            return
         z = self.zoom()
         layer = self.editor.selected_layer()
         if layer is not None and not layer.locked:
@@ -263,6 +274,13 @@ class CanvasView(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(delta.y()))
             return
         x, y = self._scene_pt(e)
+        if self.brush.active:
+            self._cursor_pt = (x, y)
+            if getattr(self, "_stroking", False):
+                self.brush.paint(x, y, first=False, flip_mode=bool(e.modifiers() & Qt.KeyboardModifier.AltModifier))
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            self.viewport().update()
+            return
         mods = e.modifiers()
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         alt = bool(mods & Qt.KeyboardModifier.AltModifier)
@@ -308,6 +326,10 @@ class CanvasView(QGraphicsView):
             self.viewport().setCursor(
                 Qt.CursorShape.OpenHandCursor if self._space else Qt.CursorShape.ArrowCursor)
             return
+        if getattr(self, "_stroking", False):
+            self._stroking = False
+            self.brush.end_stroke()
+            return
         d, self._drag = self._drag, None
         self._guides = []
         if d is not None:
@@ -328,10 +350,20 @@ class CanvasView(QGraphicsView):
     # ------------------------------------------------------------ keys
     def keyPressEvent(self, e) -> None:
         key = e.key()
+        if self.brush.active and key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight, Qt.Key.Key_Escape,
+                                         Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+                self.brush.resize(0.8 if key == Qt.Key.Key_BracketLeft else 1.25)
+            else:
+                self.brush.finish(apply=key != Qt.Key.Key_Escape)
+            self.viewport().update()
+            return
         if key == Qt.Key.Key_Space and not e.isAutoRepeat():
             self._space = True
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             return
+        if self.brush.active:
+            return  # no nudging/deleting the layer mid-brush
         layer = self.editor.selected_layer()
         arrows = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
                   Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
@@ -361,25 +393,3 @@ class CanvasView(QGraphicsView):
                 self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
             return
         super().keyReleaseEvent(e)
-
-    # ------------------------------------------------------------ drag & drop from Explorer
-    def dragEnterEvent(self, e) -> None:
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
-        else:
-            super().dragEnterEvent(e)
-
-    def dragMoveEvent(self, e) -> None:
-        if e.mimeData().hasUrls():
-            e.acceptProposedAction()
-        else:
-            super().dragMoveEvent(e)
-
-    def dropEvent(self, e) -> None:
-        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
-        if not paths:
-            super().dropEvent(e)
-            return
-        p = self.mapToScene(e.position().toPoint())
-        e.acceptProposedAction()
-        self.files_dropped.emit(paths, (p.x(), p.y()))

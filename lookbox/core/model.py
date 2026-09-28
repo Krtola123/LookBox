@@ -172,6 +172,18 @@ class Fill:
 
 
 @dataclass(kw_only=True)
+class LayerMask:
+    """Non-destructive layer mask (§9). The mask is its own asset: a greyscale image
+    the same size as the layer's full source; white = visible. Edge controls are
+    live (never baked in) and in source pixels."""
+
+    asset: str  # AssetInfo.id of the greyscale mask image
+    shift: float = 0.0  # grow (+) / shrink (−) the edge, source px
+    feather: float = 0.0  # soften the edge, source px
+    invert: bool = False
+
+
+@dataclass(kw_only=True)
 class AssetInfo:
     """Metadata for an asset. The bytes and decoded pixels are in AssetStore."""
 
@@ -194,6 +206,7 @@ class Layer:
     adjust: Adjustments = field(default_factory=Adjustments)
     fade: GradientFade | None = None
     effects: Effects = field(default_factory=Effects)
+    mask: LayerMask | None = None  # image layers only
 
     kind = "base"  # class attribute, not a field
 
@@ -244,6 +257,8 @@ class Document:
             if isinstance(layer, ImageLayer):
                 ids.add(layer.source)
                 ids.update(layer.passes.values())
+            if layer.mask is not None:
+                ids.add(layer.mask.asset)
         return ids
 
 
@@ -280,6 +295,8 @@ def _layer_common(cls: type, data: dict) -> dict:
     fade = d.get("fade")
     d["fade"] = GradientFade(**_known(GradientFade, fade)) if fade is not None else None
     d["effects"] = effects_from_dict(d.get("effects", {}))
+    mask = d.get("mask")
+    d["mask"] = LayerMask(**_known(LayerMask, mask)) if mask is not None else None
     return d
 
 
