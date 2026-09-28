@@ -303,6 +303,7 @@ lookbox/
   app.py                  # entry point
   core/                   # NO Qt imports allowed
     model.py              # dataclasses (§5)
+    assets.py             # content-addressed AssetStore (original bytes + decoded pixels)
     serialize.py          # .lookbox read/write + migrations
     render/
       pipeline.py         # §6.1 orchestration
@@ -324,10 +325,15 @@ lookbox/
     birefnet.py
     sam.py
     esrgan.py
-  commands/               # every QUndoCommand lives here
+  commands/               # the ONLY code that mutates a Document
+    edits.py              # plain-Python edits (apply/revert), Qt-free, unit-tested
+    qt.py                 # QUndoCommand adapter around edits
   ui/
     main_window.py
+    editor.py             # open doc + assets + QUndoStack + selection; the UI's single entry point
+    jobs.py               # background workers (export, …)
     canvas/               # QGraphicsView, items, handles, mask overlay
+      handles.py          # handle/drag/hit-test geometry — kept Qt-free so it's testable
     panels/               # adjust, effects, filters, position, layers, text
     widgets/              # slider-with-number, colour picker, gradient editor
     theme.qss
