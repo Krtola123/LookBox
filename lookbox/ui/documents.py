@@ -171,11 +171,14 @@ class DocumentActions(QObject):
         self.status.emit(f"Importing {n} image{'s' if n != 1 else ''}…", 0)
         self._start(job)
 
-    @Slot(object, list, list, object)
-    def _on_imported(self, store, infos: list, errors: list, at) -> None:
+    @Slot(object, list, list, list, object)
+    def _on_imported(self, store, items: list, errors: list, notes: list, at) -> None:
         self._finish(self.sender())
-        added = self.editor.add_imported(store, infos, at)
-        self.status.emit("" if added or not infos else "Import skipped: a different design was opened.", 4000)
+        added = self.editor.add_imported(store, items, at)
+        if not added and items:
+            self.status.emit("Import skipped: a different design was opened.", 4000)
+        else:
+            self.status.emit("Render passes found: " + "; ".join(notes) if notes else "", 8000)
         if errors:
             self._error("Some images couldn't be imported", "\n".join(errors))
 

@@ -1,13 +1,20 @@
-"""Adjust tab → Cut-out (M6): remove background, edge controls, mask brush,
-extract to a new layer, remove the cut-out."""
+"""Adjust tab → Cut-out: remove background (M6), pick an object from the render's
+ID pass and lasso (M8), mask brush, edge controls, extract to a new layer.
+
+Pick, Lasso and Brush are tools of one mask session on the canvas (canvas/mask_brush.py):
+switch between them freely; Done (or Extract) makes the whole session one undo step."""
 
 from __future__ import annotations
 
 import copy
 
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+                               QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
+from lookbox.core.io import render_sets as RS
+from lookbox.core.io.images import ImageError
 from lookbox.core.model import ImageLayer
 from lookbox.ui.canvas.mask_brush import MaskBrush
 from lookbox.ui.cutout import CutoutController
@@ -88,37 +95,95 @@ class CutoutSection(QWidget):
         mb.addLayout(actions)
         col.addWidget(self.mask_box)
 
-        # ---- brush ----
+        # ---- select by hand: entry buttons ----
+        self.start_row = QWidget()
+        sr = QHBoxLayout(self.start_row)
+        sr.setContentsMargins(0, 0, 0, 0)
+        self.pick_btn = _button("Pick object…")
+        self.pick_btn.setToolTip("Click an object in the render: selected exactly, from its ID pass")
+        self.pick_btn.clicked.connect(lambda: self._start("pick"))
+        self.lasso_btn = _button("Lasso…")
+        self.lasso_btn.setToolTip("Draw around what to keep")
+        self.lasso_btn.clicked.connect(lambda: self._start("lasso"))
         self.brush_btn = _button("Brush…")
         self.brush_btn.setToolTip("Paint the mask: erase or restore by hand")
-        self.brush_btn.clicked.connect(self._start_brush)
-        col.addWidget(self.brush_btn)
+        self.brush_btn.clicked.connect(lambda: self._start("brush"))
+        for b in (self.pick_btn, self.lasso_btn, self.brush_btn):
+            sr.addWidget(b)
+        col.addWidget(self.start_row)
+        self.passes_label = QLabel()
+        self.passes_label.setObjectName("hintLabel")
+        self.passes_label.setWordWrap(True)
+        self.attach_btn = _button("Attach ID pass…")
+        self.attach_btn.setToolTip("Add the render's Object ID or Material ID pass (same size as the render)")
+        self.attach_btn.clicked.connect(self._attach_pass)
+        pass_row = QHBoxLayout()
+        pass_row.addWidget(self.passes_label, 1)
+        pass_row.addWidget(self.attach_btn)
+        col.addLayout(pass_row)
+
+        # ---- the session (on the canvas) ----
         self.brush_box = QWidget()
         bb = QVBoxLayout(self.brush_box)
         bb.setContentsMargins(0, 0, 0, 0)
         bb.setSpacing(4)
-        hint = QLabel("Drag on the canvas to paint. Alt = the opposite mode · [ ] = size · Enter = done")
-        hint.setObjectName("hintLabel")
-        hint.setWordWrap(True)
-        bb.addWidget(hint)
+        tools = QHBoxLayout()
+        self.tool_btns: dict[str, QPushButton] = {}
+        for tool, label in (("pick", "Pick"), ("lasso", "Lasso"), ("brush", "Brush")):
+            b = _button(label)
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, t=tool: self._set_tool(t))
+            tools.addWidget(b)
+            self.tool_btns[tool] = b
+        bb.addLayout(tools)
+        self.hint = QLabel()
+        self.hint.setObjectName("hintLabel")
+        self.hint.setWordWrap(True)
+        bb.addWidget(self.hint)
+        # pick options
+        self.pick_box = QWidget()
+        pb = QVBoxLayout(self.pick_box)
+        pb.setContentsMargins(0, 0, 0, 0)
+        self.pick_pass = QComboBox()
+        self.pick_pass.currentIndexChanged.connect(self._pick_pass_changed)
+        pp = QHBoxLayout()
+        lab = QLabel("Pick by")
+        lab.setObjectName("sliderLabel")
+        pp.addWidget(lab)
+        pp.addStretch(1)
+        pp.addWidget(self.pick_pass)
+        pb.addLayout(pp)
+        self.tolerance = SliderRow("tolerance", "Tolerance", minimum=0, maximum=60, default=0)
+        self.tolerance.edited.connect(lambda v: setattr(self.brush, "tolerance", v))
+        pb.addWidget(self.tolerance)
+        bb.addWidget(self.pick_box)
+        # brush options
+        self.paint_box = QWidget()
+        bb2 = QVBoxLayout(self.paint_box)
+        bb2.setContentsMargins(0, 0, 0, 0)
         modes = QHBoxLayout()
         self.erase_btn, self.restore_btn = _button("Erase"), _button("Restore")
         for b, restore in ((self.erase_btn, False), (self.restore_btn, True)):
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, r=restore: self._set_mode(r))
             modes.addWidget(b)
-        bb.addLayout(modes)
+        bb2.addLayout(modes)
         self.size_row = SliderRow("size", "Size", minimum=2, maximum=800, default=80, suffix=" px")
         self.size_row.edited.connect(lambda v: self._brush_setting("size", float(v)))
         self.hardness_row = SliderRow("hardness", "Hardness", minimum=0, maximum=100, default=60, suffix="%")
         self.hardness_row.edited.connect(lambda v: self._brush_setting("hardness", v / 100.0))
-        bb.addWidget(self.size_row)
-        bb.addWidget(self.hardness_row)
+        bb2.addWidget(self.size_row)
+        bb2.addWidget(self.hardness_row)
+        bb.addWidget(self.paint_box)
         done_row = QHBoxLayout()
         self.done_btn, self.cancel_btn = _button("Done", primary=True), _button("Cancel")
+        self.session_extract = _button("Extract")
+        self.session_extract.setToolTip("Done, and put the selection on its own layer")
         self.done_btn.clicked.connect(lambda: self.brush.finish(apply=True))
+        self.session_extract.clicked.connect(self._done_and_extract)
         self.cancel_btn.clicked.connect(lambda: self.brush.finish(apply=False))
         done_row.addWidget(self.done_btn)
+        done_row.addWidget(self.session_extract)
         done_row.addWidget(self.cancel_btn)
         bb.addLayout(done_row)
         col.addWidget(self.brush_box)
@@ -147,9 +212,35 @@ class CutoutSection(QWidget):
         self.model_btn.setText(f"Model: {spec.name}" if spec else "Model…")
         has_mask = layer is not None and layer.mask is not None
         self.mask_box.setVisible(has_mask and not brushing)
-        self.brush_btn.setVisible(not brushing)
-        self.brush_btn.setText("Brush…" if has_mask else "Cut out by hand…")
+        kinds = [k for k in RS.ID_KINDS if layer is not None and k in layer.passes]
+        self.start_row.setVisible(layer is not None and not brushing)
+        self.pick_btn.setVisible(bool(kinds))
+        self.passes_label.setVisible(layer is not None and not brushing)
+        self.attach_btn.setVisible(layer is not None and not brushing)
+        self.passes_label.setText("ID passes: " + ", ".join(RS.PASS_LABELS[k] for k in kinds) if kinds
+                                  else "No ID pass (name it like render_objectid.png to attach it on import)")
+        self.attach_btn.setText("Attach…" if kinds else "Attach ID pass…")
         self.brush_box.setVisible(brushing)
+        tool = self.brush.tool
+        for t, b in self.tool_btns.items():
+            b.setChecked(t == tool)
+        self.tool_btns["pick"].setVisible(bool(kinds))
+        self.hint.setText({
+            "pick": "Click an object to select it. Shift+click adds, Alt+click removes. Red = hidden.",
+            "lasso": "Drag around it, or click corner by corner and press Enter. Shift adds, Alt removes.",
+            "brush": "Drag to paint. Alt = the opposite mode · [ ] = size.",
+        }[tool] + " Enter = done, Esc = cancel.")
+        self.pick_box.setVisible(tool == "pick")
+        self.paint_box.setVisible(tool == "brush")
+        self.pick_pass.blockSignals(True)
+        self.pick_pass.clear()
+        for k in kinds:
+            self.pick_pass.addItem(RS.PASS_LABELS[k], k)
+        if self.brush.pick_kind in kinds:
+            self.pick_pass.setCurrentIndex(kinds.index(self.brush.pick_kind))
+        self.pick_pass.setVisible(len(kinds) > 1)
+        self.pick_pass.blockSignals(False)
+        self.tolerance.set_value(self.brush.tolerance)
         self.erase_btn.setChecked(not self.brush.restore)
         self.restore_btn.setChecked(self.brush.restore)
         self.size_row.set_value(self.brush.size)
@@ -211,9 +302,60 @@ class CutoutSection(QWidget):
             self.editor.push(batch)
             self.editor.select(batch.parts[0].layer.id)  # select the new cut-out layer
 
-    def _start_brush(self) -> None:
+    def _start(self, tool: str) -> None:
         if self._layer() is not None:
+            self.brush.tool = tool
             self.brush.start(self._layer_id)
+
+    def _set_tool(self, tool: str) -> None:
+        self.brush.set_tool(tool)
+
+    def _pick_pass_changed(self, _i: int) -> None:
+        kind = self.pick_pass.currentData()
+        if kind:
+            self.brush.pick_kind = kind
+
+    def _done_and_extract(self) -> None:
+        layer_id = self.brush.layer_id
+        if layer_id is None or not self.editor.doc.has_layer(layer_id):
+            return
+        batch = edits.extract_session(self.editor.doc, layer_id, self.brush.take_edit())
+        self.brush.end()
+        if batch is not None:  # one undo step: selection + extract
+            self.editor.push(batch)
+            self.editor.select(batch.parts[0].layer.id)
+
+    def _attach_pass(self) -> None:
+        layer = self._layer()
+        if layer is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Attach ID pass", "",
+                                              "Images (" + " ".join(f"*{e}" for e in RS.SUPPORTED_EXTS) + ")")
+        if not path:
+            return
+        kind = RS.guess_kind(path)
+        if kind not in RS.ID_KINDS:
+            labels = [RS.PASS_LABELS[k] for k in RS.ID_KINDS]
+            choice, ok = QInputDialog.getItem(self, "Attach ID pass", "What kind of pass is it?", labels, 0, False)
+            if not ok:
+                return
+            kind = RS.ID_KINDS[labels.index(choice)]
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            info = self.editor.store.add_file(path)
+        except (ImageError, MemoryError, OSError) as exc:
+            QMessageBox.warning(self, "Couldn't attach the pass", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        src = self.editor.doc.assets[layer.source]
+        if (info.width, info.height) != (src.width, src.height):
+            QMessageBox.warning(self, "Couldn't attach the pass",
+                                f"The pass is {info.width} × {info.height}; the render is {src.width} × {src.height}. "
+                                "A pass must be the same size as its render.")
+            return
+        self.editor.push(edits.SetPass(layer.id, kind, info, text=f"Attach {RS.PASS_LABELS[kind]} pass"))
+        self.refresh()
 
     def _set_mode(self, restore: bool) -> None:
         self.brush.restore = restore

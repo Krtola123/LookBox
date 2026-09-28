@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 from dataclasses import replace
 
-from lookbox.core.model import TEXT_ALIGNS, TEXT_FIELDS, AssetInfo, Document, Layer, Transform
+from lookbox.core.model import AssetInfo, Document, Layer, Transform
 
 
 class Edit:
@@ -30,28 +30,33 @@ class Edit:
 
 
 class AddLayer(Edit):
+    """Add a layer, plus the assets it needs that the document doesn't have yet
+    (`asset` = its source; `extra_assets` = passes, mask). Undo takes them out again."""
+
     def __init__(self, layer: Layer, index: int | None = None, asset: AssetInfo | None = None,
-                 text: str = "Add layer") -> None:
+                 text: str = "Add layer", extra_assets: tuple[AssetInfo, ...] = ()) -> None:
         self.layer = copy.deepcopy(layer)
         self.index = index
         self.asset = asset
+        self.assets = [a for a in (asset, *extra_assets) if a is not None]
         self.text = text
-        self._added_asset = False
+        self._added: list[str] = []
 
     def apply(self, doc: Document) -> None:
         if doc.has_layer(self.layer.id):
             raise ValueError("Layer already exists.")
-        if self.asset is not None and self.asset.id not in doc.assets:
-            doc.assets[self.asset.id] = self.asset
-            self._added_asset = True
+        for a in self.assets:
+            if a.id not in doc.assets:
+                doc.assets[a.id] = a
+                self._added.append(a.id)
         idx = len(doc.layers) if self.index is None else self.index
         doc.layers.insert(idx, copy.deepcopy(self.layer))
 
     def revert(self, doc: Document) -> None:
         del doc.layers[doc.layer_index(self.layer.id)]
-        if self._added_asset:
-            del doc.assets[self.asset.id]
-            self._added_asset = False
+        for aid in self._added:
+            del doc.assets[aid]
+        self._added = []
 
 
 class RemoveLayer(Edit):
@@ -228,78 +233,6 @@ class SetLayerField(Edit):
         return True
 
 
-class SetText(Edit):
-    """Change a text layer's content or type settings, and (optionally) its transform,
-    since a box that changes size is re-placed so the text grows from its top edge and
-    its left edge / centre / right edge by alignment (see text.anchored). Typing and slider drags pass a merge_key: one undo step."""
-
-    def __init__(self, layer_id: str, old: dict, new: dict, old_t: Transform | None = None,
-                 new_t: Transform | None = None, text: str = "Edit text", merge_key: str | None = None) -> None:
-        unknown = (set(old) | set(new)) - set(TEXT_FIELDS)
-        if unknown or set(old) != set(new):
-            raise ValueError(f"Not text settings (or old/new differ): {sorted(unknown)}")
-        if new.get("align", "left") not in TEXT_ALIGNS:
-            raise ValueError(f"Unknown alignment: {new['align']!r}")
-        if (old_t is None) != (new_t is None):
-            raise ValueError("Give both transforms or neither.")
-        self.layer_id = layer_id
-        self.old, self.new = copy.deepcopy(old), copy.deepcopy(new)
-        self.old_t, self.new_t = old_t, new_t
-        self.text, self.merge_key = text, merge_key
-
-    def _set(self, doc: Document, values: dict, t: Transform | None) -> None:
-        layer = doc.layer(self.layer_id)
-        if layer.kind != "text":
-            raise ValueError("Not a text layer.")
-        for k, v in values.items():
-            setattr(layer, k, copy.deepcopy(v))
-        if t is not None:
-            layer.transform = replace(t)
-
-    def apply(self, doc: Document) -> None:
-        self._set(doc, self.new, self.new_t)
-
-    def revert(self, doc: Document) -> None:
-        self._set(doc, self.old, self.old_t)
-
-    def merge(self, newer: Edit) -> bool:
-        if not (isinstance(newer, SetText) and newer.layer_id == self.layer_id):
-            return False
-        for k, v in newer.new.items():  # fields only the newer edit touched: its old is the true old
-            self.old.setdefault(k, copy.deepcopy(newer.old[k]))
-            self.new[k] = copy.deepcopy(v)
-        if newer.new_t is not None:
-            if self.old_t is None:
-                self.old_t = newer.old_t
-            self.new_t = newer.new_t
-        return True
-
-
-def resize_text(doc: Document, layer_id: str, t0: Transform, t1: Transform) -> SetText:
-    """A corner-drag on text: fold the scale into the font size (text.baked_resize), so
-    the text is re-rendered at its new size instead of stretched pixels."""
-    from lookbox.core.render.text import baked_resize
-
-    layer = doc.layer(layer_id)
-    fields, t = baked_resize(layer, t1)
-    return SetText(layer_id, {k: getattr(layer, k) for k in fields}, fields, t0, t, text="Resize text")
-
-
-def change_text(doc: Document, layer_id: str, label: str = "Edit text", merge_key: str | None = None,
-                **fields) -> SetText | None:
-    """Build the edit for new text settings, re-placing the box so it grows from its
-    anchor (top edge + left/centre/right by alignment). None if nothing changes."""
-    from lookbox.core.render.text import anchored, layer_box
-
-    layer = doc.layer(layer_id)
-    old = {k: getattr(layer, k) for k in fields}
-    if old == fields:
-        return None
-    after = replace(layer, **fields)
-    t = anchored(layer.transform, layer_box(layer), layer_box(after), after.align)
-    return SetText(layer_id, old, fields, layer.transform, t, text=label, merge_key=merge_key)
-
-
 class SetMask(Edit):
     """Set, change or remove a layer's mask. A new mask image arrives as `asset`
     (added to the document if it isn't there yet; taken out again on undo).
@@ -333,6 +266,47 @@ class SetMask(Edit):
             return False
         self.new = copy.deepcopy(newer.new)
         return True
+
+
+class SetPass(Edit):
+    """Attach (or with asset None, detach) a render pass on an image layer (§11)."""
+
+    def __init__(self, layer_id: str, kind: str, asset: AssetInfo | None, text: str = "Attach pass") -> None:
+        from lookbox.core.io.render_sets import PASS_KINDS
+
+        if kind not in PASS_KINDS:
+            raise ValueError(f"Unknown pass: {kind!r}")
+        self.layer_id, self.kind, self.asset, self.text = layer_id, kind, asset, text
+        self._old: str | None = None
+        self._added_asset = False
+
+    def apply(self, doc: Document) -> None:
+        layer = doc.layer(self.layer_id)
+        if layer.kind != "image":
+            raise ValueError("Only image layers have render passes.")
+        if self.asset is not None:
+            src = doc.assets[layer.source]
+            if (self.asset.width, self.asset.height) != (src.width, src.height):
+                raise ValueError(f"The pass is {self.asset.width} × {self.asset.height}; the render is "
+                                 f"{src.width} × {src.height}. A pass must be the same size as its render.")
+        self._old = layer.passes.get(self.kind)
+        if self.asset is not None and self.asset.id not in doc.assets:
+            doc.assets[self.asset.id] = self.asset
+            self._added_asset = True
+        if self.asset is None:
+            layer.passes.pop(self.kind, None)
+        else:
+            layer.passes[self.kind] = self.asset.id
+
+    def revert(self, doc: Document) -> None:
+        layer = doc.layer(self.layer_id)
+        if self._old is None:
+            layer.passes.pop(self.kind, None)
+        else:
+            layer.passes[self.kind] = self._old
+        if self._added_asset:
+            del doc.assets[self.asset.id]
+            self._added_asset = False
 
 
 class Batch(Edit):
@@ -373,6 +347,26 @@ def extract_to_layer(doc: Document, layer_id: str) -> Batch:
                   SetMask(layer_id, src.mask, None)], text="Extract to new layer")
 
 
+def extract_session(doc: Document, layer_id: str, set_mask: "SetMask | None") -> Batch | None:
+    """Done + Extract from a mask session as ONE undo step: the session's mask (`set_mask`,
+    not applied yet; None = the mask didn't change) goes on a copy above; the original
+    shows everything again. None if there's nothing to extract."""
+    from lookbox.core.model import new_id
+
+    src = doc.layer(layer_id)
+    mask = set_mask.new if set_mask is not None else src.mask
+    if mask is None:
+        return None
+    cut = copy.deepcopy(src)
+    cut.id, cut.name, cut.locked = new_id(), f"{src.name} cut-out", False
+    cut.mask = copy.deepcopy(mask)
+    parts: list[Edit] = [AddLayer(cut, index=doc.layer_index(layer_id) + 1,
+                                  asset=set_mask.asset if set_mask is not None else None)]
+    if src.mask is not None:
+        parts.append(SetMask(layer_id, src.mask, None))
+    return Batch(parts, text="Extract selection")
+
+
 def remove_background(doc: Document, layer_id: str, mask, asset: AssetInfo | None,
                       keep_background: bool) -> Edit:
     """Apply a background-removal mask; optionally keep what was removed as its own
@@ -392,3 +386,7 @@ def remove_background(doc: Document, layer_id: str, mask, asset: AssetInfo | Non
     bg.effects = type(layer.effects)()  # a shadow/glow on the leftover background makes no sense
     bg.locked = False
     return Batch([set_mask, AddLayer(bg, index=doc.layer_index(layer_id))], text="Remove background")
+
+
+# Text edits live in their own module (size); re-exported so callers keep using `edits.X`.
+from lookbox.commands.text_edits import SetText, change_text, resize_text  # noqa: E402,F401

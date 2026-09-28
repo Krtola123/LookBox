@@ -1,20 +1,28 @@
-"""Mask brush (ARCHITECTURE §9): paint a layer's mask on the canvas.
+"""Mask editing session (ARCHITECTURE §9): brush, ID pick and lasso on the canvas.
 
 While active, the layer is shown without its mask and a red overlay marks what
-is hidden (like Photoshop's quick mask). Painting edits a full-resolution
+is hidden (like Photoshop's quick mask). Every tool edits one full-resolution
 working copy; Done turns it into a new mask asset through one SetMask edit, so
-a whole brush session is one undo step.
+a whole session is one undo step.
+
+Tools: Brush (paint erase/restore), Pick (click an object in the ID pass) and
+Lasso (drag = freehand; click, click, … Enter or double-click = polygon). Pick
+and lasso replace the selection; Shift adds to it, Alt takes away.
 """
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+
 import cv2
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtWidgets import QGraphicsPixmapItem
+from PySide6.QtWidgets import QApplication, QGraphicsPixmapItem
 
 from lookbox.commands import edits
 from lookbox.core.masks import ops as M
+from lookbox.core.masks.idpick import IdPass
+from lookbox.core.masks.lasso import lasso_mask
 from lookbox.core.model import ImageLayer, LayerMask
 from lookbox.core.render.effects import layer_scale
 from lookbox.core.render.transform import level_matrix
@@ -24,6 +32,8 @@ from lookbox.ui.canvas.layer_items import bgra_to_pixmap, to_qtransform
 OVERLAY_MAX_SIDE = 1600  # the red overlay is display-only: screen resolution is plenty
 OVERLAY_RGB = (255, 60, 100)
 OVERLAY_ALPHA = 0.55
+TOOLS = ("brush", "pick", "lasso")
+LASSO_MIN_STEP_PX = 3.0  # screen px between freehand points
 
 
 class MaskBrush(QObject):
@@ -38,6 +48,14 @@ class MaskBrush(QObject):
         self.size = 80.0  # brush diameter, canvas px
         self.hardness = 0.6
         self.restore = False  # False = erase (hide), True = restore (show)
+        self.tool = "brush"
+        self.pick_kind = "object_id"  # which ID pass Pick reads
+        self.tolerance = 0  # 8-bit steps of colour slack for Pick
+        self.lasso: list[tuple[float, float]] = []  # canvas points of the lasso being drawn
+        self.polygon = False  # lasso: building a polygon click by click (vs a freehand drag)
+        self._lasso_mode = "replace"
+        self._ids: dict[str, Future] = {}  # ID passes being / already prepared, by asset id (≤ 2 kept)
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="idpass")
         self._last: tuple[float, float] | None = None
         self._overlay: QGraphicsPixmapItem | None = None
         self._dirty = False
@@ -92,25 +110,180 @@ class MaskBrush(QObject):
         self.view.scene().addItem(self._overlay)
         self.view.layers.set_mask_bypass(layer_id)
         self._update_overlay()
+        if self.tool == "pick":
+            self.prepare_ids()
         self.changed.emit()
 
     def finish(self, apply: bool) -> None:
+        edit = self.take_edit() if apply else None
+        if edit is not None:
+            self.editor.push(edit)
+        self.end()
+
+    def take_edit(self) -> edits.SetMask | None:
+        """The SetMask this session amounts to (None if it changes nothing). Doesn't push it."""
+        layer = self._layer()
+        if not self.active or layer is None or self.mask is None:
+            return None
+        old = layer.mask
+        if old is None and self.mask.min() >= 1.0:  # an untouched full mask changes nothing
+            return None
+        info = self.editor.store.add_bytes(M.encode_mask_png(self.mask), ".png", "mask")
+        new = LayerMask(asset=info.id, shift=old.shift if old else 0.0,
+                        feather=old.feather if old else 0.0, invert=old.invert if old else False)
+        return None if new == old else edits.SetMask(layer.id, old, new, asset=info, text="Edit cut-out")
+
+    def end(self) -> None:
+        """Close the session without applying anything."""
         if not self.active:
             return
-        layer = self._layer()
-        if apply and layer is not None and self.mask is not None:
-            old = layer.mask
-            if old is not None or self.mask.min() < 1.0:  # an untouched full mask changes nothing
-                info = self.editor.store.add_bytes(M.encode_mask_png(self.mask), ".png", "mask")
-                new = LayerMask(asset=info.id, shift=old.shift if old else 0.0,
-                                feather=old.feather if old else 0.0, invert=old.invert if old else False)
-                if new != old:
-                    self.editor.push(edits.SetMask(layer.id, old, new, asset=info, text="Brush mask"))
         if self._overlay is not None:
             self.view.scene().removeItem(self._overlay)
             self._overlay = None
-        lid, self.layer_id, self.mask, self._last = self.layer_id, None, None, None
+        self.layer_id, self.mask, self._last = None, None, None
+        self.lasso, self.polygon = [], False
+        self._ids.clear()  # a prepared 24 MP pass holds ~400 MB: let it go with the session
         self.view.layers.set_mask_bypass(None)
+        self.changed.emit()
+
+    def set_tool(self, tool: str) -> None:
+        if tool not in TOOLS:
+            raise ValueError(tool)
+        self.tool = tool
+        self.lasso, self.polygon = [], False
+        if tool == "pick":
+            self.prepare_ids()
+        self.view.viewport().update()  # drop a half-drawn lasso from the screen
+        self.changed.emit()
+
+    def pick_kinds(self) -> list[str]:
+        layer = self._layer()
+        return [k for k in ("object_id", "material_id") if layer is not None and k in layer.passes]
+
+    # ------------------------------------------------------------ pointer routing (from the view)
+    @staticmethod
+    def _mode(shift: bool, alt: bool) -> str:
+        return "add" if shift else "subtract" if alt else "replace"
+
+    def press(self, x: float, y: float, shift: bool, alt: bool) -> None:
+        if self.tool == "brush":
+            self.paint(x, y, first=True, flip_mode=alt)
+        elif self.tool == "pick":
+            self.pick(x, y, self._mode(shift, alt))
+        elif self.polygon:
+            self.lasso.append((x, y))  # next corner of the polygon
+        else:
+            self.lasso = [(x, y)]
+            self._lasso_mode = self._mode(shift, alt)
+
+    def move(self, x: float, y: float, dragging: bool, alt: bool) -> None:
+        if self.tool == "brush" and dragging:
+            self.paint(x, y, first=False, flip_mode=alt)
+        elif self.tool == "lasso" and dragging and not self.polygon and self.lasso:
+            lx, ly = self.lasso[-1]
+            step = LASSO_MIN_STEP_PX / max(self.view.zoom(), 1e-6)
+            if (x - lx) ** 2 + (y - ly) ** 2 >= step * step:
+                self.lasso.append((x, y))
+
+    def release(self) -> None:
+        if self.tool == "brush":
+            self.end_stroke()
+        elif self.tool == "lasso" and not self.polygon and self.lasso:
+            xs, ys = [p[0] for p in self.lasso], [p[1] for p in self.lasso]
+            extent = max(max(xs) - min(xs), max(ys) - min(ys)) * self.view.zoom()
+            if len(self.lasso) >= 3 and extent >= 3 * LASSO_MIN_STEP_PX:
+                self.close_lasso()  # a freehand drag: done when you let go
+            else:
+                self.lasso = self.lasso[:1]  # a click (or a twitch): start a polygon, one corner per click
+                self.polygon = True
+        self.changed.emit()
+
+    def key(self, key: int) -> bool:
+        """Enter / Esc / [ ]. Returns True if handled."""
+        if key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            self.resize(0.8 if key == Qt.Key.Key_BracketLeft else 1.25)
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self.polygon:
+                self.close_lasso()
+            else:
+                self.finish(apply=True)
+        elif key == Qt.Key.Key_Escape:
+            if self.lasso:
+                self.lasso, self.polygon = [], False  # drop the lasso, keep the session
+                self.changed.emit()
+            else:
+                self.finish(apply=False)
+        else:
+            return False
+        return True
+
+    # ------------------------------------------------------------ pick + lasso
+    def _pass_id(self, layer: ImageLayer, kind: str | None = None) -> str | None:
+        kind = kind or self.pick_kind
+        return layer.passes.get(kind) or next(iter(
+            layer.passes[k] for k in ("object_id", "material_id") if k in layer.passes), None)
+
+    def prepare_ids(self) -> None:
+        """Start getting the layer's ID passes ready in the background (~1–2 s for a
+        24 MP pass), so the first click doesn't stall."""
+        layer = self._layer()
+        if layer is None:
+            return
+        for kind in ("object_id", "material_id"):
+            aid = layer.passes.get(kind)
+            if aid is not None and aid not in self._ids:
+                if len(self._ids) >= 2:
+                    self._ids.clear()
+                pixels = self.editor.store.pixels(aid)
+                self._ids[aid] = self._pool.submit(IdPass, pixels)
+
+    def _id_pass(self, layer: ImageLayer) -> IdPass | None:
+        aid = self._pass_id(layer)
+        if aid is None:
+            return None
+        if aid not in self._ids:
+            self.prepare_ids()
+        try:
+            return self._ids[aid].result()  # waits only if it's still being prepared
+        except BaseException:
+            self._ids.pop(aid, None)  # don't keep a failure: the next click tries again
+            raise
+
+    def shutdown(self) -> None:
+        self.end()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def pick(self, x: float, y: float, mode: str) -> None:
+        layer = self._layer()
+        if layer is None or self.mask is None:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ids = self._id_pass(layer)
+            if ids is None or ids.shape != self.mask.shape:
+                return
+            sx, sy = canvas_to_source(self.editor.doc, layer, x, y)
+            colour = ids.sample(sx, sy)
+            if colour is None:
+                return
+            self.mask = M.combine(self.mask, ids.mask(colour, self.tolerance / 255.0), mode)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._update_overlay()
+
+    def close_lasso(self) -> None:
+        layer = self._layer()
+        pts, mode = self.lasso, self._lasso_mode
+        self.lasso, self.polygon = [], False
+        if layer is not None and self.mask is not None and len(pts) >= 3:
+            src = [canvas_to_source(self.editor.doc, layer, x, y) for x, y in pts]
+            h, w = self.mask.shape
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self.mask = M.combine(self.mask, lasso_mask(src, w, h), mode)
+            finally:
+                QApplication.restoreOverrideCursor()
+            self._update_overlay()
         self.changed.emit()
 
     # ------------------------------------------------------------ painting

@@ -249,8 +249,8 @@ All selection tools produce a **float32 mask** at the layer's source resolution.
 
 | Tool | How it works |
 |---|---|
-| ID pick | Click the canvas → sample the layer's ID pass → mask = pixels matching that colour (tolerance slider, default 0). Shift-click adds, Alt-click subtracts |
-| Lasso | Polygonal (click points) and freehand (drag). Rasterize with anti-aliasing |
+| ID pick | Click the canvas → sample the layer's ID pass → mask = pixels matching that colour (tolerance slider, default 0). Shift-click adds, Alt-click subtracts. **Soft edges (M8):** renderers anti-alias ID passes, so an exact match sits a pixel inside the beauty's soft edge and looks jagged. Edge pixels are solved as mixes in premultiplied RGBA, p ≈ a·A + c·B1 + (1−a−c)·B2, with B1 the nearest flat other colour and B2 the most different one nearby (transparent if none), so corners where the object meets another object *and* the background work too. Whether the pass was mixed in linear light and sRGB-encoded is measured once from all its edges (mixes are straight lines only in the space they were made in), and the solve runs in that space. Measured on 8×-supersampled synthetic passes (transparent / black / grey backgrounds, both encodings): mean edge error 0.001–0.003 vs ~0.5 for an exact match. `IdPass` stores 16-bit colours, int64 keys and a flat map (≈2 s and ~400 MB for 24 MP, built in the background when Pick starts, freed when the session ends); a click is ≈0.3 s |
+| Lasso | Polygonal (click points, Enter or double-click closes) and freehand (drag). Exact scanline fill of sample centres (even-odd) on a supersampled bounding box, area-averaged: true coverage at the edge |
 | Smart select (SAM) | Positive clicks, negative clicks, or a box. Decoder reruns on each click. See §10 |
 | Remove background | One click. Whole-image subject mask (§10) |
 | Mask brush | Paint erase/restore with a soft round brush (size in canvas px, hardness). Works with or without an AI mask (no mask = start fully visible: a manual cut-out). **Required**: AI masks are never perfect |
@@ -263,6 +263,8 @@ All selection tools produce a **float32 mask** at the layer's source resolution.
 - *Apply as layer mask* (non-destructive; this is "remove background").
 - *Extract to new layer*: a new ImageLayer referencing the **same source asset** with the mask applied. The original stays untouched underneath. This is our "Magic Grab". The hole is not filled (non-goal).
 - *Keep the background* (default on, remembered): Remove background also adds the removed part as a layer right below (same source, same mask inverted, effects cleared) in the same undo step. Known: at soft edges, subject over background isn't perfectly opaque (α + (1−α)² < 1), a faint seam, as in any layer split.
+
+**Mask session (M8):** Pick, Lasso and Brush are tools of one session on the canvas; switch freely. Pick and lasso *replace* the selection, Shift adds, Alt subtracts (`ops.combine`: max / min with the inverse); the brush edits it. Done, or **Extract** (done + extract to new layer, one undo step), or Cancel.
 
 The mask edit UI is a mode: the layer shows unmasked, a red overlay marks hidden areas, Done/Cancel (Enter/Esc), Alt flips erase/restore, [ ] resize. One brush session = one undo step. Switching layers applies the session; so does New/Open/Close (before the save prompt, so painting is never lost silently).
 
@@ -301,7 +303,7 @@ Model sources, filenames, sizes and sha256 values live in `lookbox/models/models
 
 **Import**
 - Single image: PNG (8/16), JPG, TIFF, EXR, WEBP.
-- **Import render set:** pick the beauty image, and the app auto-detects sibling pass files by filename suffix (configurable, defaults `_objectid`, `_materialid`, `_alpha`). Passes attach to `ImageLayer.passes`.
+- **Render sets (M8), no separate command:** every import looks for passes. Names are compared with case, spaces, dashes, underscores and dots removed; a file is a pass if its name is the beauty's plus a pass word before or after it (`objectid`, `object`, `objid`, `id`, `idmap`, `meshid` → Object ID; `materialid`, `matid`, `material` → Material ID; `alpha`, `alphamask`, `mask`, `matte` → Alpha), frame numbers allowed on both (`shot_objectid_0001`). Passes selected together with their render attach to it instead of becoming layers; the render's folder is also searched. Passes attach to `ImageLayer.passes` (must be the render's size, else skipped with a message). An **alpha pass** becomes the layer's cut-out (a mask asset) when the render itself is opaque. Anything not detected: **Attach ID pass…** in Cut-out. `core/io/render_sets.py`, tested without Qt.
 - ID passes must be loaded with **nearest-neighbour** sampling only, never interpolated.
 - Drag-and-drop from Explorer onto the canvas.
 
@@ -360,11 +362,11 @@ lookbox/
       cache.py
     masks/
       ops.py              # mask storage, grow/shrink, feather, refine edge, brush stamping
-      idpick.py           # (M8)
-      lasso.py            # (M8)
+      idpick.py           # ID pass → mask with anti-aliased edges (IdPass)
+      lasso.py            # polygon → anti-aliased mask
     io/
       images.py           # load/save, EXR handling, dither
-      render_sets.py      # pass detection
+      render_sets.py      # pass detection, grouping, alpha pass → mask, import_files
   ai/                     # Qt-free
     registry.py           # models.json, verified downloads
     runtime.py            # onnxruntime sessions, DirectML → CPU fallback, one model loaded
@@ -374,6 +376,7 @@ lookbox/
   models/models.json      # model urls, sizes, sha256
   commands/               # the ONLY code that mutates a Document
     edits.py              # plain-Python edits (apply/revert), Qt-free, unit-tested
+    text_edits.py         # text-layer edits (re-exported by edits.py)
     qt.py                 # QUndoCommand adapter around edits
   ui/
     main_window.py        # layout + wiring only
@@ -429,7 +432,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M5 | Effects: shadow, glow, outline, blur | The shadow follows the layer when moved, with no re-blur on move |
 | M6 | *(pulled forward)* AI infrastructure + background removal + layer masks + mask brush + edge controls + extract to layer | Remove the background of a photo on the RTX 4060 (and CPU fallback); download flow verifies the model; fix an edge with the brush; extract to a new layer |
 | M7 | Text layers | Edit text with shadow and outline applied, live on the canvas (typed in the Style tab, see §12) |
-| M8 | Render-set import + ID pick + lasso | Pick an object from a Toolbag ID pass and extract it to a layer with a clean edge |
+| M8 | Render-set import + ID pick + lasso | Pick an object from a Toolbag ID pass and extract it to a layer with a clean edge (done: soft ID edges, see §9) |
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |

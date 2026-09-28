@@ -74,6 +74,21 @@ def guides(painter: QPainter, lines: list[tuple[str, float]], canvas: QRectF) ->
             painter.drawLine(QPointF(canvas.left(), v), QPointF(canvas.right(), v))
 
 
+def lasso(painter: QPainter, points: list[tuple[float, float]]) -> None:
+    """The lasso being drawn: marching-ants look (dark + white dashes), open end."""
+    if len(points) < 2:
+        return
+    poly = QPolygonF([QPointF(x, y) for x, y in points])
+    for colour, dash in ((QColor(0, 0, 0, 200), None), (QColor(255, 255, 255, 240), [4.0, 4.0])):
+        pen = QPen(colour, 1.5)
+        pen.setCosmetic(True)
+        if dash:
+            pen.setDashPattern(dash)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(poly)
+
+
 def brush_cursor(painter: QPainter, x: float, y: float, radius: float) -> None:
     """Brush outline, readable on light and dark images (dark ring + white ring)."""
     painter.setBrush(Qt.BrushStyle.NoBrush)

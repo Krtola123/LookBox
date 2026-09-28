@@ -140,3 +140,20 @@ def stroke(mask: np.ndarray, p0: tuple[float, float], p1: tuple[float, float], r
             rect = r if rect is None else (min(rect[0], r[0]), min(rect[1], r[1]),
                                            max(rect[2], r[2]), max(rect[3], r[3]))
     return rect
+
+
+# ------------------------------------------------------------------ combining selections
+
+COMBINE_MODES = ("replace", "add", "subtract")
+
+
+def combine(current: np.ndarray, new: np.ndarray, mode: str) -> np.ndarray:
+    """Merge a new selection into a mask: replace it, add to it (Shift), or take it
+    away (Alt). Soft edges combine like Photoshop's (max / min with the inverse)."""
+    if mode == "replace":
+        return new.astype(np.float32, copy=True)
+    if mode == "add":
+        return np.maximum(current, new)
+    if mode == "subtract":
+        return np.minimum(current, 1.0 - new)
+    raise ValueError(f"Unknown combine mode: {mode!r}")

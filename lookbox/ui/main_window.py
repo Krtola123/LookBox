@@ -251,6 +251,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.cutout.shutdown()
+        self.canvas.brush.shutdown()
         self.docs.wait_all()  # an in-flight save must land before we exit
         self.renderer.shutdown()
         e.accept()

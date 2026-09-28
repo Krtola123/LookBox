@@ -14,30 +14,28 @@ from PySide6.QtCore import QThread, Signal
 
 from lookbox.core import serialize
 from lookbox.core.assets import AssetStore
-from lookbox.core.io.images import ImageError, atomic_write, save_png
+from lookbox.core.io import render_sets
+from lookbox.core.io.images import atomic_write, save_png
 from lookbox.core.model import Document
 from lookbox.core.render.pipeline import Cancelled, render
 
 
 class ImportJob(QThread):
-    """Decodes image files into `store`. Emits (store, infos, errors, at)."""
+    """Decodes image files into `store`, render passes attached to their render (§11).
+    Emits (store, items, errors, notes, at)."""
 
-    done = Signal(object, list, list, object)
+    done = Signal(object, list, list, list, object)
 
     def __init__(self, store: AssetStore, paths: list[str], at, parent=None) -> None:
         super().__init__(parent)
         self.store, self.paths, self.at = store, list(paths), at
 
     def run(self) -> None:
-        infos, errors = [], []
-        for path in self.paths:
-            try:
-                infos.append(self.store.add_file(path))
-            except ImageError as exc:
-                errors.append(str(exc))
-            except MemoryError:
-                errors.append(f"{path}: not enough memory to open this image.")
-        self.done.emit(self.store, infos, errors, self.at)
+        try:
+            items, errors, notes = render_sets.import_files(self.store, self.paths)
+        except Exception as exc:  # reported, never swallowed (§16.5)
+            items, errors, notes = [], [f"Import failed: {exc}"], []
+        self.done.emit(self.store, items, errors, notes, self.at)
 
 
 class OpenJob(QThread):

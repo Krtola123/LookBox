@@ -32,7 +32,7 @@ pytest
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested
 (text layout included, with a stand-in for the Qt font engine).
 
-## Status: milestone M7
+## Status: milestone M8
 
 | Works | How |
 |---|---|
@@ -57,6 +57,9 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Gradient fade | **Style** tab, any layer: fade to transparent, linear or radial, with direction, start, end, invert |
 | Remove background | **Adjust** tab → Cut-out → **Remove background**. First time: pick *Best quality* (973 MB, for 8 GB+ GPUs) or *Fast* (224 MB), downloaded once and checked against its published checksum. Runs on your GPU (DirectML), or the CPU if that fails. Non-destructive: it adds a layer mask |
 | Fix the cut-out | **Edge shift** and **Feather** sliders, **Invert**, and **Brush…**: paint Erase/Restore on the canvas (red = hidden; Alt flips the mode, [ ] size, Enter done, Esc cancel). No AI needed: **Cut out by hand…** starts from a fully visible layer |
+| Render passes | Import a render and LookBox finds its passes next to it: `shot_objectid.png`, `shot_Object ID.png`, `shot_MaterialID.png`, `shot_alpha.png` (any case, spaces/dashes/underscores, frame numbers). Picking the passes together with the render works too. Not named like that? **Adjust → Cut-out → Attach ID pass…**. An alpha pass cuts the render out automatically |
+| Pick object | **Pick object…** (renders with an ID pass): click an object and it's selected exactly, with the render's own soft edge. Shift+click adds objects, Alt+click removes. Switch between Object ID and Material ID. **Extract** puts it on its own layer |
+| Lasso | **Lasso…**: drag around something, or click corner by corner and press Enter (or double-click). Shift adds, Alt removes. Works on any image |
 | Keep the thing | **Extract to new layer**: the cut-out goes on its own layer above; the original shows everything again |
 | Keep the background | On by default ("Keep the background as its own layer"): Remove background also puts what was removed on a layer right below, so you can blur, adjust or hide it. One undo step |
 | If something breaks | LookBox shows a dialog instead of closing and writes the details to `%LOCALAPPDATA%\LookBox\logs\lookbox.log`. Send that file |

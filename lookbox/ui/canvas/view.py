@@ -178,8 +178,11 @@ class CanvasView(FileDropMixin, QGraphicsView):
                               corners_only=isinstance(layer, TextLayer))
         if self._guides:
             overlay.guides(painter, self._guides, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
-        if self.brush.active and self._cursor_pt is not None:
+        if self.brush.active and self._cursor_pt is not None and self.brush.tool == "brush":
             overlay.brush_cursor(painter, *self._cursor_pt, self.brush.size / 2.0)
+        if self.brush.active and self.brush.lasso:
+            live = [self._cursor_pt] if self.brush.polygon and self._cursor_pt else []
+            overlay.lasso(painter, self.brush.lasso + live)
 
     # ------------------------------------------------------------ helpers
     def _layer(self, lid: str) -> Layer | None:
@@ -229,10 +232,11 @@ class CanvasView(FileDropMixin, QGraphicsView):
         if e.button() != Qt.MouseButton.LeftButton:
             return
         x, y = self._scene_pt(e)
-        if self.brush.active:
-            self.brush.paint(x, y, first=True, flip_mode=bool(e.modifiers() & Qt.KeyboardModifier.AltModifier))
+        if self.brush.active:  # mask session: brush / pick / lasso
+            m, K = e.modifiers(), Qt.KeyboardModifier
+            self.brush.press(x, y, shift=bool(m & K.ShiftModifier), alt=bool(m & K.AltModifier))
             self._stroking = True
-            return
+            return self.viewport().update()
         z = self.zoom()
         layer = self.editor.selected_layer()
         if layer is not None and not layer.locked:
@@ -261,9 +265,9 @@ class CanvasView(FileDropMixin, QGraphicsView):
         x, y = self._scene_pt(e)
         if self.brush.active:
             self._cursor_pt = (x, y)
-            if getattr(self, "_stroking", False):
-                self.brush.paint(x, y, first=False, flip_mode=bool(e.modifiers() & Qt.KeyboardModifier.AltModifier))
-            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            self.brush.move(x, y, dragging=self._stroking, alt=bool(e.modifiers() & Qt.KeyboardModifier.AltModifier))
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if self.brush.tool == "pick"
+                                      else Qt.CursorShape.CrossCursor)
             self.viewport().update()
             return
         mods = e.modifiers()
@@ -313,9 +317,10 @@ class CanvasView(FileDropMixin, QGraphicsView):
             self.viewport().setCursor(
                 Qt.CursorShape.OpenHandCursor if self._space else Qt.CursorShape.ArrowCursor)
             return
-        if getattr(self, "_stroking", False):
+        if self._stroking:
             self._stroking = False
-            self.brush.end_stroke()
+            self.brush.release()
+            self.viewport().update()
             return
         d, self._drag = self._drag, None
         self._guides = []
@@ -332,6 +337,11 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self.viewport().update()
 
     def mouseDoubleClickEvent(self, e) -> None:
+        if self.brush.active:
+            if self.brush.polygon and e.button() == Qt.MouseButton.LeftButton:
+                self.brush.close_lasso()  # double-click finishes a polygon lasso
+                self.viewport().update()
+            return
         hit = H.layer_at(self.editor.doc, self.editor.store, *self._scene_pt(e))
         if e.button() == Qt.MouseButton.LeftButton and not self.brush.active and hit is not None \
                 and isinstance(self._layer(hit), TextLayer):
@@ -349,12 +359,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
     # ------------------------------------------------------------ keys
     def keyPressEvent(self, e) -> None:
         key = e.key()
-        if self.brush.active and key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight, Qt.Key.Key_Escape,
-                                         Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
-                self.brush.resize(0.8 if key == Qt.Key.Key_BracketLeft else 1.25)
-            else:
-                self.brush.finish(apply=key != Qt.Key.Key_Escape)
+        if self.brush.active and self.brush.key(key):
             self.viewport().update()
             return
         if key == Qt.Key.Key_Space and not e.isAutoRepeat():
