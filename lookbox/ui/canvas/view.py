@@ -77,7 +77,9 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self._stats_timer.timeout.connect(self._emit_stats)
 
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # Zoom anchoring is done by hand in wheelEvent: Qt's AnchorUnderMouse relies on the base
+        # mouseMoveEvent tracking the cursor, which our override replaces (so it anchored at 0,0).
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setBackgroundBrush(QColor("#111214"))
@@ -149,7 +151,12 @@ class CanvasView(FileDropMixin, QGraphicsView):
         if e.modifiers() & Qt.KeyboardModifier.ControlModifier:
             target = max(MIN_ZOOM, min(MAX_ZOOM, self.zoom() * 1.0015 ** e.angleDelta().y()))
             f = target / self.zoom()
-            self.scale(f, f)  # AnchorUnderMouse keeps the cursor point fixed
+            pos = e.position().toPoint()
+            before = self.mapToScene(pos)
+            self.scale(f, f)
+            shift = (before - self.mapToScene(pos)) * self.zoom()  # scroll so `before` is back under the cursor
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + round(shift.x()))
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + round(shift.y()))
             self.zoom_changed.emit(self.zoom())
             e.accept()
         else:
