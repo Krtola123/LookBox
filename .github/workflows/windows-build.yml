@@ -28,10 +28,19 @@ jobs:
       - name: Install
         run: python -m pip install -r requirements-dev.txt "pyinstaller>=6.6"
 
+      # Failures are also posted as an annotation (readable from the API without logs).
       - name: Tests (real Qt, offscreen)
+        shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q -rf --tb=short -p no:cacheprovider 2>&1 | Tee-Object -FilePath pytest.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $t = (Get-Content pytest.txt -Tail 120) -join '%0A'
+            Write-Host "::error title=pytest::$t"
+          }
+          exit $code
 
       - name: Build LookBox.exe
         run: |
@@ -43,9 +52,12 @@ jobs:
         run: |
           $report = "$env:RUNNER_TEMP\selftest.txt"
           $p = Start-Process -FilePath dist\LookBox\LookBox.exe -ArgumentList "--selftest", "`"$report`"" -Wait -PassThru
-          if (Test-Path $report) { Get-Content $report } else { Write-Host "no report written" }
+          $text = if (Test-Path $report) { Get-Content $report } else { @("no report written") }
           $log = "$env:LOCALAPPDATA\LookBox\logs\lookbox.log"
-          if (Test-Path $log) { Write-Host "---- lookbox.log"; Get-Content $log }
+          if (Test-Path $log) { $text += "---- lookbox.log"; $text += Get-Content $log -Tail 60 }
+          $text
+          $level = if ($p.ExitCode -eq 0) { "notice" } else { "error" }
+          Write-Host ("::$level title=selftest::" + ($text -join '%0A'))
           "{0:N0} MB" -f ((Get-ChildItem dist\LookBox -Recurse | Measure-Object Length -Sum).Sum / 1MB)
           exit $p.ExitCode
 
