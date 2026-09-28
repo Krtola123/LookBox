@@ -71,7 +71,12 @@ def test_qt_text_engine_measures_and_draws():
         big = T.render_text(layer, lay.width * 2, lay.height * 2)  # a level-2 render is the same picture
         import cv2
         down = cv2.resize(big[..., 3], (lay.width, lay.height), interpolation=cv2.INTER_AREA)
-        assert np.abs(down - ink).mean() < 0.03
+
+        def box(a):
+            ys, xs = np.nonzero(a > 0.5)
+            return xs.min(), ys.min(), xs.max(), ys.max(), round(float(a.sum()), 1)
+
+        assert np.abs(down - ink).mean() < 0.03, f"1x {box(ink)} vs 2x→1x {box(down)}"
         wider = T.layout(TextLayer(text="Hello", font_size=40, font_family="Arial", letter_spacing=10))
         assert wider.width >= T.layout(TextLayer(text="Hello", font_size=40, font_family="Arial")).width + 40
 

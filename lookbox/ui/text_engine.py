@@ -6,6 +6,11 @@ Font sizes are fractional pixels: fonts are resolved against 72-dpi images, wher
 one point is one pixel, so `setPointSizeF(font_size)` gives exactly font_size px.
 Hinting is off so text scales linearly (a resize doesn't reflow it).
 
+Glyphs are drawn as outlines (QPainterPath), not as text: Qt's text drawing snaps
+and hints glyphs per pixel size, so a 2× render wasn't the 1× one at double
+resolution (measured on Windows: 12% mean difference). Outlines are pure
+geometry, so every level is the same picture; the path is built once per layout.
+
 Runs on render threads too: Qt allows painting QImages off the GUI thread. Painting
 is lock-free (typing must not wait behind a big render); the metrics cache is locked
 and per-thread, so no QFontMetricsF is shared between threads.
@@ -17,7 +22,7 @@ import threading
 
 import numpy as np
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath
 
 from lookbox.core.model import TextLayer
 from lookbox.core.render.text import FontMetrics, Layout
@@ -58,6 +63,7 @@ class QtTextEngine:
         self._lock = threading.Lock()
         self._local = threading.local()  # per-thread 1×1 72-dpi device for measuring
         self._metrics: dict[tuple, QFontMetricsF] = {}
+        self._paths: dict[tuple, QPainterPath] = {}  # per thread + layout: outlines, in layout px
 
     def _fm(self, layer: TextLayer) -> QFontMetricsF:
         """Call with the lock held."""
@@ -81,20 +87,34 @@ class QtTextEngine:
         with self._lock:
             return float(self._fm(layer).horizontalAdvance(s))
 
+    def _path(self, layer: TextLayer, layout: Layout) -> QPainterPath:
+        key = (threading.get_ident(), _font_key(layer), layout)
+        with self._lock:
+            path = self._paths.get(key)
+            if path is None:
+                device = getattr(self._local, "device", None)
+                if device is None:
+                    device = self._local.device = _image(1, 1)
+                font = QFont(make_font(layer), device)  # 72 dpi: sizes in px, like the metrics
+                path = QPainterPath()
+                for line in layout.lines:
+                    if line.text:
+                        path.addText(QPointF(line.x, line.baseline), font, line.text)
+                if len(self._paths) > 64:
+                    self._paths.clear()
+                self._paths[key] = path
+            return path
+
     def coverage(self, layer: TextLayer, layout: Layout, w: int, h: int) -> np.ndarray:
+        path = self._path(layer, layout)
         img = _image(w, h)
         if img.isNull():  # Qt couldn't allocate it
             raise MemoryError(f"Not enough memory to draw {w} × {h} px of text.")
         p = QPainter(img)
         try:
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
             p.scale(w / layout.width, h / layout.height)
-            p.setFont(QFont(make_font(layer), img))
-            p.setPen(QColor(255, 255, 255))
-            for line in layout.lines:
-                if line.text:
-                    p.drawText(QPointF(line.x, line.baseline), line.text)
+            p.fillPath(path, QColor(255, 255, 255))
         finally:
             p.end()
         # BGRA bytes, rows padded to bytesPerLine; alpha (byte 3) is the coverage.
