@@ -13,7 +13,8 @@ A personal, offline, Canva-simple compositor for finishing Marmoset Toolbag rend
 Nothing is installed or written outside `%LOCALAPPDATA%\LookBox` (AI models, logs, settings in the registry
 under `HKCU\Software\LookBox`). To update: replace the folder.
 
-**Make a release:** `git tag v1.0.1 && git push --tags` builds it and publishes the zip under Releases.
+**Make a release:** raise `__version__` in `lookbox/__init__.py` and push to main; the build publishes
+`LookBox-windows.zip` as release `v<version>` once its tests and self-test pass.
 **Build on your own PC:** double-click **`build.bat`** → `dist\LookBox\LookBox.exe` (it runs the self-test at the end).
 **Check any build:** `LookBox.exe --selftest report.txt` (no window; exit code 0 = OK).
 

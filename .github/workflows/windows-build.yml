@@ -1,12 +1,12 @@
 # Windows build (ARCHITECTURE §15, M12): tests with real Qt, then LookBox.exe, then the
 # exe checks itself (--selftest) on a machine that never ran LookBox. The zip is attached
-# to the run; pushing a tag like v1.0.0 also publishes it as a GitHub release.
+# to the run. A new lookbox.__version__ on main is published as a GitHub release
+# (tag v<version>), so releasing = bumping the version.
 name: Windows build
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -70,8 +70,14 @@ jobs:
           path: LookBox-windows.zip
           retention-days: 30
 
-      - name: Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: LookBox-windows.zip
+      - name: Release a new version
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = python -c "import lookbox; print(lookbox.__version__)"
+          gh release view "v$v" *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Host "v$v is already released"; exit 0 }
+          gh release create "v$v" LookBox-windows.zip --target $env:GITHUB_SHA --title "LookBox $v" `
+            --notes "Unzip anywhere and run LookBox.exe (keep it next to its _internal folder). Self-tested on Windows by the build."
