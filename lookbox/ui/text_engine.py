@@ -46,7 +46,6 @@ def make_font(layer: TextLayer) -> QFont:
     weight = min(_WEIGHTS, key=lambda w: abs(w - int(layer.weight)))
     f.setWeight(QFont.Weight(weight))
     f.setItalic(bool(layer.italic))
-    f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, float(layer.letter_spacing))
     f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     # Greyscale antialiasing only: we read coverage from alpha, ClearType would fringe it.
     f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.NoSubpixelAntialias)
@@ -54,8 +53,7 @@ def make_font(layer: TextLayer) -> QFont:
 
 
 def _font_key(layer: TextLayer) -> tuple:
-    return (layer.font_family, float(layer.font_size), int(layer.weight), bool(layer.italic),
-            float(layer.letter_spacing))
+    return (layer.font_family, float(layer.font_size), int(layer.weight), bool(layer.italic))
 
 
 class QtTextEngine:
@@ -88,7 +86,7 @@ class QtTextEngine:
             return float(self._fm(layer).horizontalAdvance(s))
 
     def _path(self, layer: TextLayer, layout: Layout) -> QPainterPath:
-        key = (threading.get_ident(), _font_key(layer), layout)
+        key = (threading.get_ident(), _font_key(layer), float(layer.letter_spacing), layout)
         with self._lock:
             path = self._paths.get(key)
             if path is None:
@@ -96,10 +94,19 @@ class QtTextEngine:
                 if device is None:
                     device = self._local.device = _image(1, 1)
                 font = QFont(make_font(layer), device)  # 72 dpi: sizes in px, like the metrics
+                fm = self._fm(layer)
+                spacing = float(layer.letter_spacing)
                 path = QPainterPath()
                 for line in layout.lines:
-                    if line.text:
+                    if not line.text:
+                        continue
+                    if spacing == 0.0:  # whole line: keeps kerning and ligatures
                         path.addText(QPointF(line.x, line.baseline), font, line.text)
+                        continue
+                    for i, ch in enumerate(line.text):  # spaced: each character where the core measured it
+                        if not ch.isspace():
+                            x = line.x + fm.horizontalAdvance(line.text[:i]) + i * spacing
+                            path.addText(QPointF(x, line.baseline), font, ch)
                 if len(self._paths) > 64:
                     self._paths.clear()
                 self._paths[key] = path

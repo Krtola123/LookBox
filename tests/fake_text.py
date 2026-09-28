@@ -19,7 +19,7 @@ class FakeTextEngine:
         return FontMetrics(ascent=0.8 * layer.font_size, descent=0.2 * layer.font_size)
 
     def advance(self, layer, s: str) -> float:
-        return len(s) * (ADV_EM * layer.font_size + layer.letter_spacing)
+        return len(s) * ADV_EM * layer.font_size  # letter spacing is added by the core
 
     def coverage(self, layer, layout: Layout, w: int, h: int) -> np.ndarray:
         # Supersampled 4×, then box-filtered: blocks land at fractional positions.

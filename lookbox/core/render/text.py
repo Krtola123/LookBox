@@ -53,7 +53,10 @@ class TextEngine(Protocol):
     def metrics(self, layer: TextLayer) -> FontMetrics: ...
 
     def advance(self, layer: TextLayer, s: str) -> float:
-        """Width of `s` in px, letter spacing and kerning included."""
+        """Width of `s` in px with kerning, WITHOUT letter spacing (the core adds that:
+        Qt's own letter spacing isn't reflected in its measurements on every platform).
+        When drawing with letter spacing, character i goes at
+        advance(text[:i]) + i × letter_spacing."""
 
     def coverage(self, layer: TextLayer, layout: Layout, w: int, h: int) -> np.ndarray:
         """Draw `layout` scaled to w × h pixels: float32 (h, w) coverage 0–1."""
@@ -127,7 +130,8 @@ def wrap(paragraph: str, width: float | None, measure) -> list[str]:
 def compute_layout(layer: TextLayer, eng: TextEngine) -> Layout:
     m = eng.metrics(layer)
     size = max(1.0, float(layer.font_size))
-    measure = lambda s: eng.advance(layer, s)  # noqa: E731
+    spacing = float(layer.letter_spacing)
+    measure = lambda s: eng.advance(layer, s) + spacing * len(s)  # noqa: E731
     box = None if layer.box_width is None else max(1.0, float(layer.box_width))
     rows: list[str] = []
     for para in layer.text.split("\n"):
