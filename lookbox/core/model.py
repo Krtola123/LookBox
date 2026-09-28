@@ -5,9 +5,8 @@ keyed by the asset id stored here. Everything in this module must survive a
 JSON round trip and compare equal with `==`, because undo and save tests rely
 on that.
 
-M1 subset: Transform, ImageLayer, Document. The remaining Layer fields from §5
-(mask, adjust, lut, effects, fade) arrive with their milestones; `from_dict`
-fills defaults for anything missing so older files keep loading.
+Layer kinds: ImageLayer, FillLayer, TextLayer. `from_dict` fills defaults for
+anything missing so older files keep loading.
 """
 
 from __future__ import annotations
@@ -145,6 +144,8 @@ class Effects:
     def active(self) -> bool:
         return (self.shadow is not None or self.glow is not None or self.outline is not None
                 or self.blur > 0)
+
+
 FILL_KINDS = ("solid", "linear", "radial")
 
 
@@ -229,6 +230,31 @@ class FillLayer(Layer):
     height: int = 1080
 
     kind = "fill"
+
+
+TEXT_ALIGNS = ("left", "center", "right")
+TEXT_FIELDS = ("text", "font_family", "font_size", "weight", "italic", "color", "align",
+               "letter_spacing", "line_height", "box_width")
+
+
+@dataclass(kw_only=True)
+class TextLayer(Layer):
+    """Live, editable text (§5). Its box size comes from the text layout
+    (core/render/text.py), not from stored fields. Sizes are canvas px at scale 1;
+    resizing on the canvas changes font_size, so text stays sharp."""
+
+    text: str = "Your text"
+    font_family: str = "Segoe UI"
+    font_size: float = 96.0  # pixel height of the font (em size)
+    weight: int = 700  # 100–900 (400 regular, 700 bold)
+    italic: bool = False
+    color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    align: str = "left"  # "left" | "center" | "right"
+    letter_spacing: float = 0.0  # extra px between characters
+    line_height: float = 1.2  # multiple of the font's natural line height
+    box_width: float | None = None  # None = one line per paragraph; else wrap at this width
+
+    kind = "text"
 
 
 @dataclass(kw_only=True)
@@ -335,6 +361,11 @@ def layer_from_dict(data: dict) -> Layer:
         d = _layer_common(FillLayer, data)
         d["fill"] = fill_from_dict(d.get("fill", {}))
         return FillLayer(**d)
+    if kind == "text":
+        d = _layer_common(TextLayer, data)
+        if "color" in d:
+            d["color"] = _colour(d["color"])
+        return TextLayer(**d)
     raise ValueError(f"Unknown layer kind: {kind!r}")
 
 

@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QInputDialog, QLa
                                QListWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
-from lookbox.core.model import FillLayer, Layer
+from lookbox.core.model import FillLayer, Layer, TextLayer
+from lookbox.core.render import text as text_render
 from lookbox.core.render.fill import render_fill
 from lookbox.core.render.pipeline import layer_source
 from lookbox.ui.editor import Editor
@@ -113,6 +114,8 @@ class LayersPanel(QWidget):
 
     @staticmethod
     def _fill_key(layer: Layer):
+        if isinstance(layer, TextLayer):
+            return text_render.layout_key(layer)
         return (repr(layer.fill), layer.width, layer.height) if isinstance(layer, FillLayer) else None
 
     def thumbnail(self, layer: Layer):
@@ -121,6 +124,12 @@ class LayersPanel(QWidget):
             s = min(size / layer.width, size / layer.height)
             tw, th = max(1, round(layer.width * s)), max(1, round(layer.height * s))
             return self.thumbs.get(("fill",) + self._fill_key(layer), render_fill(layer.fill, tw, th), size)
+        if isinstance(layer, TextLayer):
+            w, h = text_render.layer_box(layer)
+            s = min(size / w, size / h)
+            tw, th = max(1, round(w * s)), max(1, round(h * s))
+            return self.thumbs.get(("text",) + self._fill_key(layer),
+                                   lambda: text_render.render_text(layer, tw, th), size)
         return self.thumbs.get((layer.source, layer.crop), layer_source(layer, self.editor.store), size)
 
     def _maybe_rebuild(self) -> None:

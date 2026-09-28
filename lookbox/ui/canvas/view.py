@@ -7,16 +7,15 @@ through a single SetTransform edit (§4.2).
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QTransform
+from PySide6.QtGui import QBrush, QColor, QPainter, QTransform
 from PySide6.QtWidgets import QFrame, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from lookbox.commands import edits
-from lookbox.core.model import Layer, Transform
+from lookbox.core.model import Layer, TextLayer, Transform
 from lookbox.ui.canvas import handles as H
 from lookbox.ui.canvas import overlay
 from lookbox.ui.canvas.frame_stats import FrameStats
@@ -29,16 +28,6 @@ from lookbox.ui.render_service import RenderService
 MIN_ZOOM, MAX_ZOOM = 0.02, 32.0
 
 
-def _checker() -> QPixmap:
-    pm = QPixmap(16, 16)
-    pm.fill(QColor("#e6e6e6"))
-    p = QPainter(pm)
-    p.fillRect(0, 0, 8, 8, QColor("#c8c8c8"))
-    p.fillRect(8, 8, 8, 8, QColor("#c8c8c8"))
-    p.end()
-    return pm
-
-
 class _Drag:
     def __init__(self, mode: str, layer_id: str, handle: str | None, press: tuple[float, float],
                  t0: Transform, w: int, h: int) -> None:
@@ -49,6 +38,7 @@ class _Drag:
 
 class CanvasView(FileDropMixin, QGraphicsView):
     zoom_changed = Signal(float)
+    edit_text = Signal(str)  # double-clicked a text layer: edit it (layer id)
     files_dropped = Signal(list, object)  # paths, (x, y) canvas point
     frame_stats = Signal(str)  # drag performance readout for the status bar
 
@@ -66,7 +56,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self._canvas_item.setPen(Qt.PenStyle.NoPen)
         self._canvas_item.setZValue(-1e9)
         self._scene.addItem(self._canvas_item)
-        self._checker = QBrush(_checker())
+        self._checker = QBrush(overlay.checker())
 
         self._drag: _Drag | None = None
         self._pan_from: QPointF | None = None
@@ -177,7 +167,8 @@ class CanvasView(FileDropMixin, QGraphicsView):
         if layer is not None:
             live = self._drag is not None and self._drag.layer_id == layer.id
             t = self._drag.current if live else layer.transform
-            overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked)
+            overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked,
+                              corners_only=isinstance(layer, TextLayer))
         if self._guides:
             overlay.guides(painter, self._guides, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
         if self.brush.active and self._cursor_pt is not None:
@@ -200,19 +191,6 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self.layers.preview(d.layer_id, t)
         d.current = t
         self.viewport().update()
-
-    def _cursor_for_handle(self, t: Transform, w: int, h: int, name: str) -> Qt.CursorShape:
-        if name == H.ROTATE:
-            return Qt.CursorShape.CrossCursor
-        p = H.handle_positions(t, w, h, self.zoom())[name]
-        ang = math.degrees(math.atan2(p[1] - t.y, p[0] - t.x)) % 180.0
-        if ang < 22.5 or ang >= 157.5:
-            return Qt.CursorShape.SizeHorCursor
-        if ang < 67.5:
-            return Qt.CursorShape.SizeFDiagCursor
-        if ang < 112.5:
-            return Qt.CursorShape.SizeVerCursor
-        return Qt.CursorShape.SizeBDiagCursor
 
     # ------------------------------------------------------------ drag performance
     def _begin_drag(self, d: _Drag) -> None:
@@ -252,7 +230,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
         layer = self.editor.selected_layer()
         if layer is not None and not layer.locked:
             w, h = self._size(layer)
-            handle = H.handle_at(layer.transform, w, h, z, x, y)
+            handle = H.handle_at(layer.transform, w, h, z, x, y, corners_only=isinstance(layer, TextLayer))
             if handle is not None:
                 mode = "rotate" if handle == H.ROTATE else "scale"
                 self._begin_drag(_Drag(mode, layer.id, handle, (x, y), layer.transform, w, h))
@@ -296,7 +274,8 @@ class CanvasView(FileDropMixin, QGraphicsView):
             elif d.mode == "scale":
                 if snap:
                     x, y, self._guides = H.snap_point(d.t0, d.handle, x, y, self._targets, self.zoom())
-                self._preview(H.drag_scale(d.t0, d.w, d.h, d.handle, (x, y), free=shift, from_centre=alt))
+                free = shift and not isinstance(self._layer(d.layer_id), TextLayer)  # text never stretches
+                self._preview(H.drag_scale(d.t0, d.w, d.h, d.handle, (x, y), free=free, from_centre=alt))
             else:
                 self._preview(H.drag_rotate(d.t0, d.press, (x, y), snap_15=shift))
             return
@@ -309,9 +288,10 @@ class CanvasView(FileDropMixin, QGraphicsView):
             layer = self.editor.selected_layer()
             if layer is not None and not layer.locked:
                 w, h = self._size(layer)
-                handle = H.handle_at(layer.transform, w, h, self.zoom(), x, y)
+                handle = H.handle_at(layer.transform, w, h, self.zoom(), x, y,
+                                     corners_only=isinstance(layer, TextLayer))
                 if handle is not None:
-                    cursor = self._cursor_for_handle(layer.transform, w, h, handle)
+                    cursor = overlay.handle_cursor(layer.transform, w, h, self.zoom(), handle)
                 elif H.point_in_layer(layer.transform, w, h, x, y):
                     cursor = Qt.CursorShape.SizeAllCursor
         self.viewport().setCursor(cursor)
@@ -337,9 +317,21 @@ class CanvasView(FileDropMixin, QGraphicsView):
             self._emit_stats(final=True)
             if d.current != d.t0:
                 text = {"move": "Move", "scale": "Resize", "rotate": "Rotate"}[d.mode]
-                self.editor.push(edits.SetTransform(d.layer_id, d.t0, d.current, text=text))
+                if d.mode == "scale" and isinstance(self._layer(d.layer_id), TextLayer):
+                    self.editor.push(edits.resize_text(self.editor.doc, d.layer_id, d.t0, d.current))
+                else:
+                    self.editor.push(edits.SetTransform(d.layer_id, d.t0, d.current, text=text))
             self.layers.end_preview(d.layer_id)
         self.viewport().update()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        hit = H.layer_at(self.editor.doc, self.editor.store, *self._scene_pt(e))
+        if e.button() == Qt.MouseButton.LeftButton and not self.brush.active and hit is not None \
+                and isinstance(self._layer(hit), TextLayer):
+            self._cancel_drag()
+            self.edit_text.emit(hit)
+            return
+        super().mouseDoubleClickEvent(e)
 
     def leaveEvent(self, e) -> None:
         if self._hover is not None:

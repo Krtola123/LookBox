@@ -23,13 +23,40 @@ def on_screen_scale(t: Transform, zoom: float) -> float:
     return max(t.scale_x, t.scale_y) * zoom
 
 
-def choose_level(screen_scale: float) -> float:
-    """Smallest power of two ≥ screen_scale, clamped to [MIN_LEVEL, 1]."""
-    if screen_scale >= 1.0:
+TEXT_MAX_LEVEL = 4.0  # text is vector: render it up to 4× so zooming in stays crisp
+TEXT_FX_MAX_LEVEL = 2.0  # …but blurring a shadow at 4× costs 16× the pixels; 2× is the compromise
+TEXT_MAX_PIXELS = 16_000_000  # …and a huge headline never asks for more than this per level
+
+
+def max_level(layer) -> float:
+    """Images top out at their own pixels; text can be rendered finer, within limits."""
+    if getattr(layer, "kind", "") != "text":
         return 1.0
+    from lookbox.core.render.text import layer_box  # local: text imports this module's neighbours
+
+    top = TEXT_FX_MAX_LEVEL if layer.effects.active() else TEXT_MAX_LEVEL
+    w, h = layer_box(layer)
+    while top > 1.0 and w * h * top * top > TEXT_MAX_PIXELS:
+        top /= 2.0
+    return top
+
+
+def choose_level(screen_scale: float, top: float = 1.0) -> float:
+    """Smallest power of two ≥ screen_scale, clamped to [MIN_LEVEL, top]."""
+    if screen_scale >= top:
+        return top
     if screen_scale <= MIN_LEVEL:
         return MIN_LEVEL
     return 2.0 ** math.ceil(math.log2(screen_scale))
+
+
+def export_level(layer, out_scale: float) -> float:
+    """Level to render a layer at for a flattened export at `out_scale`."""
+    top = max_level(layer)
+    if top <= 1.0:
+        return 1.0
+    t = layer.transform
+    return max(1.0, choose_level(max(t.scale_x, t.scale_y) * out_scale, top))
 
 
 _NOISE_TILE = 64

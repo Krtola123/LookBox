@@ -25,10 +25,15 @@ class ThumbCache:
     def clear(self) -> None:
         self._thumbs.clear()
 
-    def get(self, key: tuple, pixels: np.ndarray, size: int) -> QPixmap:
+    def get(self, key: tuple, pixels, size: int) -> QPixmap:
+        """`pixels`: an array, or a function making one (only called on a cache miss)."""
         k = key + (size,)
         pm = self._thumbs.get(k)
         if pm is None:
+            if callable(pixels):
+                pixels = pixels()
+            if len(self._thumbs) > 2000:  # generated thumbnails (text, fills) change as you type
+                self._thumbs.clear()
             pm = QPixmap.fromImage(to_qimage(thumbnail_array(pixels, size)))
             self._thumbs[k] = pm
         return pm

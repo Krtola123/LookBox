@@ -22,12 +22,13 @@ import cv2
 import numpy as np
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, layer_to_dict
+from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, TextLayer, layer_to_dict
 from dataclasses import dataclass
 
 from lookbox.core.masks import ops as mask_ops
-from lookbox.core.render import adjust, blend, effects, fill
+from lookbox.core.render import adjust, blend, effects, fill, text
 from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
+from lookbox.core.render.levels import export_level
 from lookbox.core.render.transform import warp_to_canvas
 
 # Layer fields that only affect placement, never the pre-transform pixels.
@@ -95,7 +96,10 @@ def level_size(w: int, h: int, level: float) -> tuple[int, int]:
 
 
 def _base_pixels(layer: Layer, store: AssetStore, level: float) -> np.ndarray:
-    """Straight float32 RGBA at `level`: the layer's own pixels before any stage."""
+    """Straight float32 RGBA at `level`: the layer's own pixels before any stage.
+    Images never go above level 1 (there's nothing more to show); text can."""
+    if isinstance(layer, TextLayer):
+        return text.render_text(layer, *level_size(*text.layer_box(layer), level))
     if isinstance(layer, FillLayer):
         return fill.render_fill(layer.fill, *level_size(layer.width, layer.height, level))
     if isinstance(layer, ImageLayer):
@@ -168,11 +172,13 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0,
     for i, layer in enumerate(doc.layers):
         _check(cancel)
         if layer.visible and layer.opacity > 0.0:
-            rendered = render_layer_full(layer, store, 1.0, cancel)
+            level = export_level(layer, scale)  # text renders sharp at the export size
+            rendered = render_layer_full(layer, store, level, cancel)
             src = rendered.pixels
             if layer.opacity < 1.0:
                 src = src * np.float32(layer.opacity)  # after effects: fades the shadow too
-            placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale, pad=rendered.pad)
+            box = text.layer_box(layer) if isinstance(layer, TextLayer) else None
+            placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale, pad=rendered.pad, box=box)
             if placed is not None:
                 patch, (x0, y0) = placed
                 ph, pw = patch.shape[:2]

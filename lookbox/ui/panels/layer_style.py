@@ -1,5 +1,5 @@
-"""Layer tab: opacity, blend mode, gradient fade (every layer) and the fill
-editor (fill layers). Every change is a SetLayerField edit; one slider drag =
+"""Style tab: text settings (text layers), the fill editor (fill layers), and
+opacity, blend mode, gradient fade and effects (every layer). Every change is a SetLayerField edit; one slider drag =
 one undo step."""
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel
                                QScrollArea, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
-from lookbox.core.model import BLEND_MODES, FILL_KINDS, FillLayer, GradientFade, GradientStop, Layer
+from lookbox.core.model import BLEND_MODES, FILL_KINDS, FillLayer, GradientFade, GradientStop, Layer, TextLayer
 from lookbox.ui.editor import Editor
 from lookbox.ui.panels.effects import EffectsSection
+from lookbox.ui.panels.text import TextSection
 from lookbox.ui.widgets.colour_button import ColourButton
 from lookbox.ui.widgets.slider_row import SliderRow
 
@@ -65,6 +66,10 @@ class LayerPanel(QWidget):
         col = QVBoxLayout(body)
         col.setContentsMargins(16, 10, 16, 16)
         col.setSpacing(6)
+
+        # ---- text (text layers only) ----
+        self.text = TextSection(self)
+        col.addWidget(self.text)
 
         # ---- fill (fill layers only) ----
         self.fill_box = QWidget()
@@ -158,6 +163,9 @@ class LayerPanel(QWidget):
             return
         self._updating = True
         try:
+            self.text.setVisible(isinstance(layer, TextLayer))
+            if isinstance(layer, TextLayer):
+                self.text.refresh(layer)
             is_fill = isinstance(layer, FillLayer)
             self.fill_box.setVisible(is_fill)
             if is_fill:

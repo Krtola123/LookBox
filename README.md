@@ -29,9 +29,10 @@ You can pass files: `python -m lookbox scene.lookbox` or `python -m lookbox a.pn
 pytest
 ```
 
-Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
+Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested
+(text layout included, with a stand-in for the Qt font engine).
 
-## Status: milestone M6
+## Status: milestone M7
 
 | Works | How |
 |---|---|
@@ -59,6 +60,7 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Keep the thing | **Extract to new layer**: the cut-out goes on its own layer above; the original shows everything again |
 | Keep the background | On by default ("Keep the background as its own layer"): Remove background also puts what was removed on a layer right below, so you can blur, adjust or hide it. One undo step |
 | If something breaks | LookBox shows a dialog instead of closing and writes the details to `%LOCALAPPDATA%\LookBox\logs\lookbox.log`. Send that file |
+| Text | **Text** button (Ctrl+T) adds text and puts the cursor in the **Style** tab's text box; double-click text on the canvas to edit it. Type and watch it update on the canvas, shadow/outline/glow included. Font, weight, italic, colour, alignment, size, letter spacing, line height, and *Wrap at a fixed width*. Drag a corner to resize: the font size changes, so text stays sharp at any size and zoom. Text grows from its left edge (or centre/right edge, by alignment) |
 | Effects | **Style** tab: Shadow (direction, distance, blur, spread, floor squash, colour; presets **Soft drop** and **Contact shadow**), Glow, Outline (outside/centre), Layer blur. Sizes are canvas pixels and the shadow direction stays put when you rotate or resize the layer |
 
 **Tips:** blend modes preview against the checkerboard on a transparent canvas; add a backdrop

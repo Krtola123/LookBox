@@ -71,24 +71,29 @@ def _to_cv(m: np.ndarray) -> np.ndarray:
 
 
 def warp_to_canvas(
-    premult: np.ndarray, t: Transform, out_w: int, out_h: int, out_scale: float = 1.0, pad: int = 0
+    premult: np.ndarray, t: Transform, out_w: int, out_h: int, out_scale: float = 1.0, pad: int = 0,
+    box: tuple[int, int] | None = None,
 ) -> tuple[np.ndarray, tuple[int, int]] | None:
     """Warp a premultiplied RGBA layer into canvas space.
 
     Returns (patch, (x0, y0)): only the region the layer covers, to keep this
     fast. None if the layer lands entirely off-canvas. `out_scale` renders a
     scaled canvas (proxy or export scale); the canvas is out_w × out_h pixels.
+    `box` = the layer's size at scale 1 when `premult` was rendered at another
+    level (text above level 1); None = the pixels are the layer at level 1.
     """
-    h, w = premult.shape[0] - 2 * pad, premult.shape[1] - 2 * pad  # the layer box itself
-    m = _scale(out_scale, out_scale) @ layer_matrix(t, w, h) @ _translate(-pad, -pad)
+    lh, lw = premult.shape[0] - 2 * pad, premult.shape[1] - 2 * pad  # the layer box, level px
+    w, h = box if box is not None else (lw, lh)
+    m = _scale(out_scale, out_scale) @ level_matrix(t, w, h, lw, lh, pad)
     h, w = premult.shape[:2]
 
     # Area-average first when shrinking (bilinear warps alias when downscaling), by
     # WHOLE-NUMBER factors only: OpenCV's area resize is an exact box filter then,
     # while fractional factors shift the image by a fraction of a pixel. The final
     # warp handles the remaining < 2× step.
-    fx = max(1, int(1.0 / max(t.scale_x * out_scale, 1e-9)))
-    fy = max(1, int(1.0 / max(t.scale_y * out_scale, 1e-9)))
+    kx, ky = (box[0] / lw, box[1] / lh) if box is not None else (1.0, 1.0)
+    fx = max(1, int(1.0 / max(t.scale_x * out_scale * kx, 1e-9)))
+    fy = max(1, int(1.0 / max(t.scale_y * out_scale * ky, 1e-9)))
     src = premult
     if fx > 1 or fy > 1:
         # Grow the padding so the reduction blocks line up with the layer box (as they do

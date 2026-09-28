@@ -12,7 +12,8 @@ from dataclasses import replace
 import numpy as np
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, Transform
+from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, TextLayer, Transform
+from lookbox.core.render import text as text_render
 from lookbox.core.render.pipeline import layer_source
 from lookbox.core.render.transform import canvas_to_local, corners
 
@@ -42,22 +43,26 @@ def local_to_canvas(t: Transform, p: np.ndarray) -> np.ndarray:
     return np.array([t.x, t.y]) + _rot(t.rotation_deg) @ (_signed_scale(t) * p)
 
 
-def handle_positions(t: Transform, w: int, h: int, zoom: float) -> dict[str, np.ndarray]:
-    """Canvas positions of all handles. `zoom` = screen px per canvas px."""
+def handle_positions(t: Transform, w: int, h: int, zoom: float,
+                     corners_only: bool = False) -> dict[str, np.ndarray]:
+    """Canvas positions of all handles. `zoom` = screen px per canvas px.
+    `corners_only`: text resizes by corners only (it scales the font; no stretching)."""
     half = np.array([w / 2.0, h / 2.0])
     out = {name: local_to_canvas(t, half * np.array(s)) for name, s in SCALE_HANDLES.items()}
     down = _rot(t.rotation_deg) @ np.array([0.0, 1.0])  # the layer's "down", ignoring flips
     # With flip_v the local "s" handle is on top, so pick whichever edge midpoint is lower.
     bottom = max((out["n"], out["s"]), key=lambda p: float(down @ (p - np.array([t.x, t.y]))))
     out[ROTATE] = bottom + down * (ROTATE_OFFSET_PX / zoom)
+    if corners_only:
+        out = {k: v for k, v in out.items() if k in CORNERS or k == ROTATE}
     return out
 
 
 def handle_at(t: Transform, w: int, h: int, zoom: float, x: float, y: float,
-              radius_px: float = 9.0) -> str | None:
+              radius_px: float = 9.0, corners_only: bool = False) -> str | None:
     """Which handle (if any) is under canvas point (x, y)."""
     best, best_d = None, radius_px / zoom
-    for name, p in handle_positions(t, w, h, zoom).items():
+    for name, p in handle_positions(t, w, h, zoom, corners_only).items():
         d = math.hypot(p[0] - x, p[1] - y)
         if d <= best_d:
             best, best_d = name, d
@@ -142,6 +147,8 @@ def drag_rotate(t0: Transform, press: tuple[float, float], cur: tuple[float, flo
 def layer_size(doc: Document, layer: Layer) -> tuple[int, int]:
     if isinstance(layer, FillLayer):
         return layer.width, layer.height
+    if isinstance(layer, TextLayer):
+        return text_render.layer_box(layer)
     if layer.crop is not None:
         return layer.crop[2], layer.crop[3]
     info = doc.assets[layer.source]
@@ -167,6 +174,8 @@ def layer_at(doc: Document, store: AssetStore, x: float, y: float,
             # Backdrops are hit anywhere inside their box (like Canva's background), unless invisible.
             if max(s.color[3] for s in layer.fill.stops) * layer.opacity >= alpha_threshold:
                 return layer.id
+        elif isinstance(layer, TextLayer):
+            return layer.id  # anywhere in the text box: letters are too thin to aim at
         elif isinstance(layer, ImageLayer):
             if layer_source(layer, store)[iy, ix, 3] * layer.opacity >= alpha_threshold:
                 return layer.id

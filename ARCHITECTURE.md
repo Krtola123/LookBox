@@ -57,7 +57,7 @@ Consequences:
 | Image math | NumPy (float32), OpenCV (`opencv-python`) |
 | Image I/O | OpenCV (PNG 8/16-bit, JPG, TIFF, EXR). Set `OPENCV_IO_ENABLE_OPENEXR=1` before importing cv2 |
 | AI inference | `onnxruntime-directml`. Providers: `["DmlExecutionProvider", "CPUExecutionProvider"]` |
-| Text rendering | Qt (`QPainter` into a `QImage`), rasterized into the layer |
+| Text rendering | Qt (`QPainter` into a `QImage`), rasterized into the layer. The core owns layout (line breaks, alignment, spacing) and only asks a pluggable engine to measure and draw (§6.1a) |
 | Undo | Qt `QUndoStack` / `QUndoCommand` |
 | Packaging | PyInstaller `--onedir`. Models are **not** bundled (§10) |
 | Tests | pytest |
@@ -111,6 +111,9 @@ ImageLayer(Layer)
 
 TextLayer(Layer)
   text, font_family, font_size, weight, italic, color, align, letter_spacing, line_height, box_width
+                                    # canvas px at scale 1; box_width None = no wrapping. The box
+                                    # size is computed from the layout, never stored. Resizing on
+                                    # the canvas bakes the scale into font_size (text stays sharp).
 
 FillLayer(Layer)                    # backdrops; no asset
   fill: Fill                        # kind "solid" | "linear" | "radial", stops [(pos 0–1, RGBA)],
@@ -150,6 +153,13 @@ After all layers: `global_adjust` → `global_lut` → output.
 
 *Changed in M2:* opacity moved after effects (it used to sit before them).
 *Changed in M5:* layer blur moved after fade (so it can spread past the box once padded); render_layer returns `Rendered(pixels, pad)` and both placement paths (`warp_to_canvas`, `level_matrix`) take the padding.
+
+### 6.1a Text (M7)
+- `core/render/text.py` (Qt-free, tested with a fake engine) does line breaking (greedy, overlong words broken), alignment, line spacing, the box (text + a 0.12 em margin, more for italics) and colouring. A `TextEngine` only measures strings (`metrics`, `advance`) and draws laid-out lines as coverage. `ui/text_engine.py` (Qt) is registered in `app.py` after the `QApplication` exists.
+- Qt fonts are resolved against 72-dpi images, so `setPointSizeF(font_size)` is exactly `font_size` px, fractional sizes included; hinting is off so text scales linearly.
+- Text is the base pixels of the §6.1 pipeline, so adjust, fade, effects, blend modes and opacity apply unchanged.
+- Text levels go above 1 (up to 4×, 2× with effects, since blurs cost level² pixels), so zooming in stays crisp; export renders text at the export scale (`export_level`) and `warp_to_canvas(box=...)` places a level ≠ 1 image.
+- When text or type settings change the box size, `text.anchored` re-places it so the top edge and the left edge / centre / right edge (by alignment) stay put, rotation and flips included.
 
 ### 6.2 Caching
 - Each layer caches its `render_layer` result, keyed by `(render_key(layer), level)`. `render_key` hashes every layer field **except** placement ones (id, name, visible, locked, opacity, blend_mode, transform), so new fields invalidate the cache automatically.
@@ -322,7 +332,8 @@ Model sources, filenames, sizes and sha256 values live in `lookbox/models/models
 - The Layers list uses thumbnails and drag to reorder, with eye and lock toggles (as in Canva's Position → Layers).
 - Shortcuts: Ctrl+Z/Y, Ctrl+S, Ctrl+E (export), Delete, Ctrl+D (duplicate), Ctrl+B (backdrop), arrows (nudge 1 px, Shift = 10 px), Space-drag (pan), Ctrl+wheel (zoom).
 - Snapping (M5): moving snaps a layer's bounds (edges + centre) to the canvas edges/centre and other visible layers' edges/centres within 8 screen px; resizing snaps the dragged handle when the layer isn't rotated off-axis. Pink guides show the match. Hold Ctrl to place freely.
-- Context tabs: Adjust (images), Style (fill, opacity, blend, fade, effects), Layers.
+- Context tabs: Adjust (images), Style (text, fill, opacity, blend, fade, effects), Layers.
+- Text (M7): **Text** in the rail (Ctrl+T) adds a text box and puts the cursor in the Style tab's text box; double-clicking text on the canvas does the same. Typing updates the canvas live (the real render, effects included); one typing session = one undo step. Text shows corner handles only: a corner drag scales the font. *Deviation from the M7 row:* the caret is in the panel, not on the canvas; a canvas overlay editor would draw text with a second engine (QTextDocument) that doesn't match the render. Revisit if typing in the panel feels wrong in use.
 
 ---
 
@@ -339,6 +350,7 @@ lookbox/
       pipeline.py         # §6.1 orchestration: render_layer, render_key, render (export)
       levels.py           # preview level choice, dithered display quantize, thumbnails
       fill.py             # gradient fills + gradient fade masks
+      text.py             # text layout, box, anchoring; pluggable measuring/drawing engine
       effects.py          # layer blur, shadow (+ floor squash), glow, outline, padding
       adjust.py           # §7, one function per control + swatch suggestions
       effects.py          # §8
@@ -372,7 +384,8 @@ lookbox/
     cutout.py             # remove-background flow (model choice, download, run, apply)
     ai_jobs.py            # download + inference threads
     pixmaps.py            # layer thumbnails
-    panels/               # adjust.py (+ color_edit.py, cutout.py), layer_style.py (+ effects.py), layers.py; later: filters, text
+    panels/               # adjust.py (+ color_edit.py, cutout.py), layer_style.py (+ effects.py, text.py), layers.py; later: filters
+    text_engine.py        # Qt text engine: measures and draws for core/render/text.py
     widgets/              # slider_row.py, colour_button.py; later: gradient editor
     canvas/               # QGraphicsView, items, handles, mask overlay
       view.py             # mouse/keyboard/zoom
@@ -415,7 +428,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M4 | Fill layers (solid/gradient), gradient fade, blend modes | A backdrop gradient with no visible banding after 8-bit export |
 | M5 | Effects: shadow, glow, outline, blur | The shadow follows the layer when moved, with no re-blur on move |
 | M6 | *(pulled forward)* AI infrastructure + background removal + layer masks + mask brush + edge controls + extract to layer | Remove the background of a photo on the RTX 4060 (and CPU fallback); download flow verifies the model; fix an edge with the brush; extract to a new layer |
-| M7 | Text layers | Edit text in place, with shadow and outline applied |
+| M7 | Text layers | Edit text with shadow and outline applied, live on the canvas (typed in the Style tab, see §12) |
 | M8 | Render-set import + ID pick + lasso | Pick an object from a Toolbag ID pass and extract it to a layer with a clean edge |
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works |

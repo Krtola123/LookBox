@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QSizePolicy, QT
                                QToolButton, QWidget)
 
 from lookbox.commands import edits
-from lookbox.core.model import FillLayer, Transform
+from lookbox.core.model import FillLayer, TextLayer, Transform
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self.act_redo.setEnabled(False)
         self.act_fill = self._action("Backdrop", self.add_backdrop, "Ctrl+B",
                                      "Add a gradient backdrop behind everything (Ctrl+B)")
+        self.act_text = self._action("Text", self.add_text, "Ctrl+T", "Add text (Ctrl+T). Double-click text to edit it")
         self.act_duplicate = self._action("Duplicate", self.duplicate_layer, "Ctrl+D")
         self.act_delete = self._action("Delete", self.delete_layer)
         self.act_fit = self._action("Fit", self.canvas.fit, "Ctrl+0", "Fit to screen (Ctrl+0)")
@@ -136,6 +137,7 @@ class MainWindow(QMainWindow):
         select.setToolTip("Select, move, resize, rotate")
         rail.addAction(select)
         rail.addAction(self.act_import)
+        rail.addAction(self.act_text)
         rail.addAction(self.act_fill)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, rail)
 
@@ -156,6 +158,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
         self.tabs = tabs
         self.editor.selection_changed.connect(self._follow_selection)
+        self.canvas.edit_text.connect(self.edit_text)
         tabs.setMinimumWidth(290)
         tabs.setMaximumWidth(360)
         dock = QDockWidget("", self)
@@ -198,8 +201,9 @@ class MainWindow(QMainWindow):
         self.docs.import_paths(paths, at)
 
     def _follow_selection(self) -> None:
-        """Selecting a backdrop while on Adjust (images only) jumps to the Style tab."""
-        if isinstance(self.editor.selected_layer(), FillLayer) and self.tabs.currentWidget() is self.adjust_panel:
+        """Selecting a backdrop or text while on Adjust (images only) jumps to the Style tab."""
+        if isinstance(self.editor.selected_layer(), (FillLayer, TextLayer)) and \
+                self.tabs.currentWidget() is self.adjust_panel:
             self.tabs.setCurrentWidget(self.layer_panel)
 
     # ------------------------------------------------------------ layer actions
@@ -208,6 +212,19 @@ class MainWindow(QMainWindow):
         layer = FillLayer(name="Backdrop", width=c.w, height=c.h, transform=Transform(x=c.w / 2.0, y=c.h / 2.0))
         self.editor.push(edits.AddLayer(layer, index=0, text="Add backdrop"))
         self.editor.select(layer.id)
+
+    def add_text(self) -> None:
+        c = self.editor.doc.canvas
+        layer = TextLayer(name="Text", font_size=float(max(12, round(c.h * 0.08))),
+                          transform=Transform(x=c.w / 2.0, y=c.h / 2.0))
+        self.editor.push(edits.AddLayer(layer, text="Add text"))
+        self.edit_text(layer.id)
+
+    def edit_text(self, layer_id: str) -> None:
+        """Select a text layer and put the cursor in its text box (Style tab)."""
+        self.editor.select(layer_id)
+        self.tabs.setCurrentWidget(self.layer_panel)
+        QTimer.singleShot(0, self.layer_panel.text.start_editing)  # once the tab is showing
 
     def duplicate_layer(self) -> None:
         layer = self.editor.selected_layer()

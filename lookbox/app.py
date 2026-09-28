@@ -9,8 +9,10 @@ import lookbox  # noqa: F401  (EXR env var before cv2)
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from lookbox.core import serialize
+from lookbox.core.render import text as text_render
 from lookbox.crash import ErrorReporter
 from lookbox.ui.main_window import MainWindow
+from lookbox.ui.text_engine import QtTextEngine
 
 
 def _resource(name: str) -> str:
@@ -29,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Errors become a dialog + a log entry instead of a silent exit.
     ErrorReporter(show=lambda title, msg: QMessageBox.critical(None, title, msg)).install()
+    text_render.set_engine(QtTextEngine())  # needs the QApplication (fonts); before any document loads
 
     win = MainWindow()
     win.show()

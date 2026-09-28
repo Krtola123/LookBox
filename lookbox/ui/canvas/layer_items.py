@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 from dataclasses import replace
 
 from lookbox.core.model import Adjustments, Layer, Transform
-from lookbox.core.render.levels import MIN_LEVEL, choose_level, on_screen_scale
+from lookbox.core.render.levels import MIN_LEVEL, choose_level, max_level, on_screen_scale
 from lookbox.core.render.pipeline import render_key
 from lookbox.core.render.transform import level_matrix
 from lookbox.ui.canvas.handles import layer_size
@@ -66,6 +66,7 @@ class _Entry:
         self.item = item
         self.target_key = ""  # render key the layer has now
         self.want = 1.0  # level the screen needs
+        self.top = 1.0  # finest level this layer renders at (above 1 for text)
         self.shown_key = ""  # render key of the pixmap on screen
         self.shown_level = 0.0
         self.lw = self.lh = 1  # size of the layer box inside the pixmap on screen
@@ -193,7 +194,8 @@ class LayerItems(QObject):
         e.item.setTransform(to_qtransform(level_matrix(t, e.w, e.h, e.lw, e.lh, e.pad)))
 
     def _update_level(self, e: _Entry, layer: Layer) -> None:
-        e.want = choose_level(on_screen_scale(layer.transform, self.screen_scale))
+        e.top = max_level(layer)
+        e.want = choose_level(on_screen_scale(layer.transform, self.screen_scale), e.top)
         if layer.id in self._interactive:
             e.want = max(MIN_LEVEL, e.want / 2.0)
         arr = self.service.request(self._effective(layer), self.editor.store, e.want, e.target_key)
@@ -202,15 +204,15 @@ class LayerItems(QObject):
             return
         # Not ready: keep what's on screen if it's the right content, else the best cached level.
         if e.shown_key != e.target_key:
-            best = self._best_cached(e.target_key, e.want)
+            best = self._best_cached(e.target_key, e.want, e.top)
             if best is not None:
                 self._show(e, e.target_key, *best)
 
-    def _best_cached(self, key: str, want: float):
+    def _best_cached(self, key: str, want: float, top: float = 1.0):
         """Closest cached level: sharper ones first (downsampling looks fine), then softer."""
         cache = self.service.cache
         level = want
-        while level <= 1.0:
+        while level <= top:
             arr = cache.get((key, level))
             if arr is not None:
                 return level, arr
