@@ -3,7 +3,21 @@
 A personal, offline, Canva-simple compositor for finishing Marmoset Toolbag renders (and the odd photo).
 **Read [ARCHITECTURE.md](ARCHITECTURE.md) before changing anything.** It's the source of truth.
 
-## Run it (Windows)
+## Install (Windows, no Python needed)
+
+1. Download **LookBox-windows.zip**: from the repo's **Releases** page, or from the latest
+   **Actions → Windows build** run (Artifacts, at the bottom; you need to be signed in to GitHub).
+2. Unzip it anywhere (e.g. `C:\Tools\LookBox`) and run **`LookBox.exe`**. Pin it to the taskbar if you like.
+   It's a folder, not a single file: keep `LookBox.exe` next to its `_internal` folder.
+
+Nothing is installed or written outside `%LOCALAPPDATA%\LookBox` (AI models, logs, settings in the registry
+under `HKCU\Software\LookBox`). To update: replace the folder.
+
+**Make a release:** `git tag v1.0.1 && git push --tags` builds it and publishes the zip under Releases.
+**Build on your own PC:** double-click **`build.bat`** → `dist\LookBox\LookBox.exe` (it runs the self-test at the end).
+**Check any build:** `LookBox.exe --selftest report.txt` (no window; exit code 0 = OK).
+
+## Run from source (Windows)
 
 1. Install **Python 3.12** from python.org (tick "Add python.exe to PATH").
 2. Double-click **`run.bat`**. The first run creates `.venv` and installs dependencies (a few minutes).
@@ -29,10 +43,13 @@ You can pass files: `python -m lookbox scene.lookbox` or `python -m lookbox a.pn
 pytest
 ```
 
+`tests/test_qt_ui.py` drives the real widgets offscreen (text typing, pick/lasso, zoom, the self-test); it runs
+wherever PySide6 is installed, including every GitHub build, and is skipped elsewhere.
+
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested
 (text layout included, with a stand-in for the Qt font engine).
 
-## Status: milestone M8
+## Status: 1.0.0 (milestone M12: packaged)
 
 | Works | How |
 |---|---|

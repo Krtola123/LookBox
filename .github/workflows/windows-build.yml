@@ -1,0 +1,66 @@
+# Windows build (ARCHITECTURE §15, M12): tests with real Qt, then LookBox.exe, then the
+# exe checks itself (--selftest) on a machine that never ran LookBox. The zip is attached
+# to the run; pushing a tag like v1.0.0 also publishes it as a GitHub release.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only used by the release step on tags
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install
+        run: python -m pip install -r requirements-dev.txt "pyinstaller>=6.6"
+
+      - name: Tests (real Qt, offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Build LookBox.exe
+        run: |
+          python packaging/make_version_info.py
+          python -m PyInstaller packaging/lookbox.spec --noconfirm --distpath dist --workpath build
+
+      - name: Self-test the exe
+        shell: pwsh
+        run: |
+          $report = "$env:RUNNER_TEMP\selftest.txt"
+          $p = Start-Process -FilePath dist\LookBox\LookBox.exe -ArgumentList "--selftest", "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report } else { Write-Host "no report written" }
+          $log = "$env:LOCALAPPDATA\LookBox\logs\lookbox.log"
+          if (Test-Path $log) { Write-Host "---- lookbox.log"; Get-Content $log }
+          "{0:N0} MB" -f ((Get-ChildItem dist\LookBox -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+          exit $p.ExitCode
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\LookBox -DestinationPath LookBox-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LookBox-windows
+          path: LookBox-windows.zip
+          retention-days: 30
+
+      - name: Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LookBox-windows.zip

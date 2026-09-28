@@ -1,7 +1,7 @@
 """A tiny ONNX model, hand-encoded as protobuf (the `onnx` package isn't needed).
 
 One Sigmoid node, input "input_image" float [1, 3, S, S] → output "output_image".
-Lets the tests run the *real* onnxruntime end to end without downloading anything.
+Lets the tests and `--selftest` run the *real* onnxruntime end to end without downloading anything.
 """
 
 from __future__ import annotations

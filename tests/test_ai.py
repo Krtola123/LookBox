@@ -20,7 +20,7 @@ import pytest
 from lookbox.ai import birefnet as B
 from lookbox.ai import registry as R
 from lookbox.ai import runtime as RT
-from tests.onnx_tiny import sigmoid_model
+from lookbox.ai.onnx_tiny import sigmoid_model
 
 # ------------------------------------------------------------------ registry
 

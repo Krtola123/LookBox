@@ -343,7 +343,8 @@ Model sources, filenames, sizes and sha256 values live in `lookbox/models/models
 
 ```
 lookbox/
-  app.py                  # entry point
+  app.py                  # entry point (+ --selftest)
+  selftest.py             # build check, run by the exe (§15b)
   core/                   # NO Qt imports allowed
     model.py              # dataclasses (§5)
     assets.py             # content-addressed AssetStore (original bytes + decoded pixels)
@@ -436,11 +437,20 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |
-| M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed |
+| M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed (done: GitHub Actions `windows-latest` builds it and runs `LookBox.exe --selftest`, see §15b) |
 
 Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the end.
 
 ---
+
+## 15b. Packaging (M12)
+
+- `packaging/lookbox.spec` (PyInstaller, one folder, windowed, icon + version info; UPX off because packed DLLs trip antivirus). Data files: theme, icon, models.json. `collect_dynamic_libs("onnxruntime")` brings DirectML.dll. Unused Qt modules are excluded.
+- **Self-test:** `LookBox.exe --selftest [report.txt]` runs offscreen: builds the whole main window, loads bundled data, renders + exports a document with outlined text (real fonts), round-trips a project, runs a tiny ONNX model on the CPU and on DirectML if present. Exit code 0 = pass. This is what catches packaging bugs (missing DLL/plugin/data) that unit tests can't.
+- **CI:** `.github/workflows/windows-build.yml` on every push to main: pytest on Windows with real Qt (offscreen; includes `tests/test_qt_ui.py`), build, self-test the exe, upload `LookBox-windows.zip`. A `v*` tag also publishes a GitHub release.
+- `build.bat` does the same on the user's PC.
+- A windowed exe has `sys.stdout/stderr = None`; `app._harden_frozen` points them at devnull so printing never crashes. `AppUserModelID` gives LookBox its own taskbar icon.
+- Not done (deliberately): an installer, file association for `.lookbox`, code signing (unsigned exe → SmartScreen "More info → Run anyway" the first time).
 
 ## 15a. Error reporting (added after M6)
 
