@@ -23,15 +23,12 @@ import numpy as np
 
 from lookbox.core.assets import AssetStore
 from lookbox.core.model import Document, ImageLayer, Layer, layer_to_dict
-from lookbox.core.render import blend
+from lookbox.core.render import adjust, blend
+from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
 from lookbox.core.render.transform import warp_to_canvas
 
 # Layer fields that only affect placement, never the pre-transform pixels.
 PLACEMENT_FIELDS = frozenset({"id", "name", "visible", "locked", "opacity", "blend_mode", "transform"})
-
-
-class Cancelled(Exception):
-    pass
 
 
 def _check(cancel: threading.Event | None) -> None:
@@ -90,7 +87,10 @@ def render_layer(layer: ImageLayer, store: AssetStore, level: float = 1.0,
         # True area average (not striding): skipping pixels would bring back shimmer.
         src = cv2.resize(src, level_size(w, h, level), interpolation=cv2.INTER_AREA)
     _check(cancel)
-    # ---- stages from later milestones slot in here, in §6.1 order ----
+    # ---- §6.1 order: mask → adjust → LUT → blur → fade → effects (later milestones slot in) ----
+    if not layer.adjust.is_identity():
+        rgb = adjust.apply(src[:, :, :3], src[:, :, 3], layer.adjust, level, cancel)
+        src = np.concatenate([rgb, src[:, :, 3:4]], axis=2)
     return premultiply(src)
 
 

@@ -11,6 +11,7 @@ from lookbox.commands import edits
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
+from lookbox.ui.panels.adjust import AdjustPanel
 from lookbox.ui.panels.layers import LayersPanel
 from lookbox.ui.pixmaps import ThumbCache
 from lookbox.ui.render_service import RenderService
@@ -134,6 +135,10 @@ class MainWindow(QMainWindow):
     def _build_panel(self) -> None:
         tabs = QTabWidget()
         tabs.setObjectName("contextPanel")
+        self.adjust_panel = AdjustPanel(self.editor)
+        self.adjust_panel.interactive.connect(self.canvas.layers.set_interactive)
+        self.adjust_panel.compare.connect(self.canvas.layers.set_bypass)
+        tabs.addTab(self.adjust_panel, "Adjust")
         tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
         tabs.setMinimumWidth(290)
         tabs.setMaximumWidth(360)

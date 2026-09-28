@@ -11,7 +11,9 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QImage, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
-from lookbox.core.model import ImageLayer, Transform
+from dataclasses import replace
+
+from lookbox.core.model import Adjustments, ImageLayer, Transform
 from lookbox.core.render.levels import MIN_LEVEL, choose_level, on_screen_scale
 from lookbox.core.render.pipeline import render_key
 from lookbox.core.render.transform import level_matrix
@@ -49,11 +51,15 @@ class LayerItems(QObject):
         self.entries: dict[str, _Entry] = {}
         self.screen_scale = 1.0  # device pixels per canvas pixel
         self._live: dict[str, Transform] = {}  # transforms being dragged, not yet in the document
+        self._interactive: set[str] = set()  # layers whose sliders are being dragged: half-res previews
+        self._bypass: str | None = None  # layer shown "before" (adjustments off), view-only
         service.ready.connect(self._on_ready)
 
     # ---- public ----
     def clear(self) -> None:
         self._live.clear()
+        self._interactive.clear()
+        self._bypass = None
         for e in self.entries.values():
             self.scene.removeItem(e.item)
         self.entries.clear()
@@ -78,7 +84,7 @@ class LayerItems(QObject):
                 self.scene.addItem(item)
                 e = self.entries[layer.id] = _Entry(item)
             e.w, e.h = layer_size(doc, layer)
-            e.target_key = render_key(layer)
+            e.target_key = render_key(self._effective(layer))
             e.item.setZValue(z)
             e.item.setVisible(layer.visible)
             e.item.setOpacity(layer.opacity)
@@ -111,7 +117,34 @@ class LayerItems(QObject):
         if e is not None and doc.has_layer(layer_id):
             self._place(e, doc.layer(layer_id).transform)
 
+    def set_interactive(self, layer_id: str, on: bool) -> None:
+        """While a slider drags, render at half the level (4× fewer pixels) to keep up;
+        the full level renders when it's released."""
+        (self._interactive.add if on else self._interactive.discard)(layer_id)
+        self._refresh_one(layer_id)
+
+    def set_bypass(self, layer_id: str | None) -> None:
+        """Before/after: show `layer_id` without its adjustments (None = normal)."""
+        old, self._bypass = self._bypass, layer_id
+        for lid in {old, layer_id} - {None}:
+            self._refresh_one(lid)
+
+    def _refresh_one(self, layer_id: str) -> None:
+        doc = self.editor.doc
+        e = self.entries.get(layer_id)
+        if e is not None and doc.has_layer(layer_id):
+            layer = doc.layer(layer_id)
+            e.target_key = render_key(self._effective(layer))
+            self._update_level(e, layer)
+            self._place(e, self._transform_of(layer))
+
     # ---- internals ----
+    def _effective(self, layer: ImageLayer) -> ImageLayer:
+        """The layer as it should be *shown* (before/after bypass drops adjustments)."""
+        if layer.id == self._bypass and not layer.adjust.is_identity():
+            return replace(layer, adjust=Adjustments())
+        return layer
+
     def _transform_of(self, layer: ImageLayer) -> Transform:
         return self._live.get(layer.id, layer.transform)
 
@@ -120,7 +153,9 @@ class LayerItems(QObject):
 
     def _update_level(self, e: _Entry, layer: ImageLayer) -> None:
         e.want = choose_level(on_screen_scale(layer.transform, self.screen_scale))
-        arr = self.service.request(layer, self.editor.store, e.want, e.target_key)
+        if layer.id in self._interactive:
+            e.want = max(MIN_LEVEL, e.want / 2.0)
+        arr = self.service.request(self._effective(layer), self.editor.store, e.want, e.target_key)
         if arr is not None:
             self._show(e, e.target_key, e.want, arr)
             return

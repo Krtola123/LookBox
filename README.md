@@ -28,7 +28,7 @@ pytest
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
 
-## Status: milestone M2
+## Status: milestone M3
 
 | Works | How |
 |---|---|
@@ -46,6 +46,12 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | View | Ctrl+wheel zoom, Space+drag or middle-drag to pan, Ctrl+0 fit, Ctrl+1 100% |
 | Smooth previews | Layers render in the background at the resolution your screen needs and stay sharp as you zoom |
 | Never freezes | Import, open, save and export run in the background; export shows progress and can be cancelled |
+| Adjust | **Adjust** tab: Temperature, Tint, Brightness, Contrast, Highlights, Shadows, Whites, Blacks, Vibrance, Saturation, Color edit (swatches), Sharpness, Clarity, Vignette, Invert. Double-click a slider to reset it; one drag = one undo step |
+| Before / after | Toggle in the Adjust header shows the layer without its adjustments (view only) |
+
+**Tips:** judge Sharpness at 100% zoom (Ctrl+1): sharpening is too fine to show at fit-to-screen.
+While you drag a slider the preview is half resolution; it sharpens when you let go.
+Tuning a control's look? Regenerate its golden file deliberately: `pytest --update-golden`.
 
 **Checking M2 performance:** drag a layer and watch the status bar. It shows the paint cost per frame
 (95th percentile). `OK` means ≤33 ms, i.e. at least 30 fps is sustainable; `SLOW` means it isn't.

@@ -184,13 +184,13 @@ All sliders range −100…+100, default 0. `t = value / 100`. `L` = Rec.709 lum
 | 1 | Temperature | `R *= 1 + 0.3t`, `B *= 1 − 0.3t`, then renormalize so luma is preserved |
 | 2 | Tint | `G *= 1 − 0.3t` (positive = magenta), then renormalize luma |
 | 3 | Brightness | Midtone gamma: `x ** (2 ** −t)`. Endpoints stay fixed |
-| 4 | Contrast | S-curve around 0.5: blend `x` with `smoothstep(0,1,x)` by t (for t>0); for t<0 lerp toward 0.5 |
-| 5 | Highlights | Weight `w = smoothstep(0.5, 1.0, L_blur)`. `L_blur` = luma blurred with sigma ≈ 1% of the image diagonal (gives a local, halo-free-ish result). Gain `x *= 1 + 0.5·t·w` (negative recovers highlights) |
+| 4 | Contrast | S-curve around 0.5: blend `x` with `smoothstep(0,1,x)` by t (for t>0); for t<0 lerp toward 0.5 by `0.6·|t|` (−100 flattens hard but isn't pure grey) |
+| 5 | Highlights | Weight `w = smoothstep(0.5, 1.0, L_blur)`. `L_blur` = luma blurred with sigma ≈ 1% of the image diagonal (gives a local, halo-free-ish result), computed once and shared with Shadows. Gain `x *= 1 + 0.5·t·w` (negative recovers highlights) |
 | 6 | Shadows | Weight `w = smoothstep(0.5, 0.0, L_blur)`. Lift/crush: `x = x + 0.5·t·w·(1 − x)` for t>0; `x *= 1 + 0.5·t·w` for t<0 |
 | 7 | Whites | Move the white point: levels with `white = 1 − 0.25t` |
 | 8 | Blacks | Move the black point: levels with `black = −0.25t` (negative crushes) |
-| 9 | Color edit | Per-hue-band HSL: bands at swatch hues with smooth (raised-cosine) falloff; each has hue shift ±30°, saturation, lightness. Swatches are suggested from k-means (k=3–6) on the proxy image, like Canva |
-| 10 | Vibrance | Saturation boost weighted by `(1 − s)`, where s is the current HSV saturation: `s' = s + t·0.5·(1 − s)·s_ish` |
+| 9 | Color edit | Per-hue bands at swatch hues, raised-cosine falloff to 0 at ±45°, times "has colour" (greys untouched). Each band: hue shift ±30° (luma-preserving hue rotation), saturation (chroma scale `1 + t`), lightness (`× 1 + 0.5t`). Swatches: k-means (k=4) on hue, circular, from a thumbnail |
+| 10 | Vibrance | Chroma scale `1 + t·(1 − s)`, s = HSV saturation: muted colours move most, greys never |
 | 11 | Saturation | `x = lerp(L, x, 1 + t)` |
 | 12 | Clarity | Unsharp mask on L with sigma ≈ 1.5% of the image diagonal, weighted toward midtones (`4·L·(1−L)`), amount `0.6t` |
 | 13 | Sharpness | Unsharp mask on L, sigma 1.0 px (full-res), amount `1.5t`, t ≥ 0 only (negative = slight blur) |
@@ -199,6 +199,12 @@ All sliders range −100…+100, default 0. `t = value / 100`. `L` = Rec.709 lum
 
 Clip to 0–1 **only at the end**, never between steps.
 These formulas are starting points. Tune them against Canva by eye, then **freeze them with golden-image tests** (§14).
+
+**Alpha-aware blurs.** Highlights/Shadows, Clarity and Sharpness blur with normalised convolution (`blur(x·α)/blur(α)`), so the colour hidden in fully transparent pixels (black in most renders) never bleeds into object edges.
+
+**Resolution independence.** Blur radii are relative to the image diagonal (Highlights/Shadows, Clarity) or scale with the preview level (Sharpness), so every preview level looks like the downscaled export. A test enforces this per control. Sharpness is inherently resolution-bound (a 1 px edge doesn't survive downscaling the same way), so judge it at 100% zoom.
+
+**While dragging a slider**, the canvas renders that layer at half its preview level and swaps in the full level on release. Superseded renders of the same layer are cancelled.
 
 UI details: each slider has a numeric box, double-click resets it to 0, a before/after toggle sits in the panel header, and "Reset adjustments" sits at the bottom. **No Auto-adjust in v1.**
 
@@ -318,7 +324,7 @@ lookbox/
     render/
       pipeline.py         # §6.1 orchestration: render_layer, render_key, render (export)
       levels.py           # preview level choice, display quantize, thumbnails
-      adjust.py           # §7, one function per control
+      adjust.py           # §7, one function per control + swatch suggestions
       effects.py          # §8
       blend.py
       transform.py
@@ -346,19 +352,19 @@ lookbox/
     jobs.py               # background workers (import, open, save, export)
     render_service.py     # thread pool + LRU cache for per-layer preview levels
     pixmaps.py            # layer thumbnails
+    panels/               # adjust.py (+ color_edit.py), layers.py; later: effects, filters, position, text
+    widgets/              # slider_row.py; later: colour picker, gradient editor
     canvas/               # QGraphicsView, items, handles, mask overlay
       view.py             # mouse/keyboard/zoom
       layer_items.py      # one pixmap item per layer, level choice, placement
       overlay.py          # selection box, handles, dimmed outside
       frame_stats.py      # drag frame timing (Qt-free)
       handles.py          # handle/drag/hit-test geometry — kept Qt-free so it's testable
-    panels/               # adjust, effects, filters, position, layers, text
-    widgets/              # slider-with-number, colour picker, gradient editor
     theme.qss
   models/models.json
   luts/                   # bundled .cube files
 tests/
-  golden/                 # reference images
+  golden/                 # reference data (adjust_<control>.npz); regenerate: pytest --update-golden
 tools/                    # dev-only scripts (onnx export, benchmarks)
 ```
 

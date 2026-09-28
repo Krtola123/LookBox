@@ -110,3 +110,29 @@ QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
 QToolTip { background: #2e2f33; color: #e8e8ea; border: 1px solid #3a3b40; padding: 4px 8px; }
+
+/* ---- Adjust panel (M3) ---- */
+QWidget#adjustBody, QScrollArea, QScrollArea > QWidget > QWidget { background: #1c1d20; }
+QLabel#sectionTitle { font-weight: 600; color: #f0f0f2; background: transparent; padding-top: 4px; }
+QLabel#sliderLabel, QLabel#hintLabel { color: #c9cacf; background: transparent; }
+QLabel#hintLabel { color: #7c7d83; }
+QWidget#sliderRow { background: transparent; }
+QSlider#adjustSlider { background: transparent; min-height: 22px; }
+QSlider#adjustSlider::groove:horizontal { height: 4px; border-radius: 2px; background: #3a3b40; }
+QSlider#adjustSlider::handle:horizontal {
+    background: #ffffff;
+    width: 16px; height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+}
+QSlider#adjustSlider::handle:horizontal:hover { background: #e9ddff; }
+QSpinBox#sliderBox { padding: 3px 2px; border-radius: 6px; }
+QToolButton#swatch { border: 2px solid transparent; border-radius: 15px; }
+QToolButton#swatch:checked { border: 2px solid #ffffff; }
+QToolButton#compareButton {
+    background: #2a2b30; border: 1px solid #3a3b40; border-radius: 8px; padding: 4px 10px;
+}
+QToolButton#compareButton:checked { background: #8b3dff; border-color: #8b3dff; color: white; }
+QCheckBox#invertToggle { background: transparent; spacing: 6px; }
+QPushButton#resetButton { background: transparent; border: 1px solid #3a3b40; }
+QPushButton#resetButton:disabled { color: #5b5c61; border-color: #2e2f33; }

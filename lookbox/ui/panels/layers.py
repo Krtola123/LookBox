@@ -91,7 +91,8 @@ class LayersPanel(QWidget):
         self.list.itemDoubleClicked.connect(self._rename)
         # Rebuild after Qt finishes its own drop handling, not inside it.
         self.list.reordered.connect(lambda: QTimer.singleShot(0, self._on_reordered))
-        editor.changed.connect(self.rebuild)
+        self._signature: tuple = ()
+        editor.changed.connect(self._maybe_rebuild)
         editor.document_replaced.connect(self.rebuild)
         editor.selection_changed.connect(self._sync_selection)
         self.rebuild()
@@ -104,7 +105,18 @@ class LayersPanel(QWidget):
     def _ids_bottom_to_top(self) -> list[str]:
         return [self.list.item(i).data(ID_ROLE) for i in reversed(range(self.list.count()))]
 
+    def _row_signature(self) -> tuple:
+        """What the rows display. Transform/adjust edits don't change it, so a slider
+        drag or a canvas drag doesn't rebuild the list 30 times a second."""
+        return tuple((layer.id, layer.name, layer.visible, layer.locked, layer.source,
+                      getattr(layer, "crop", None)) for layer in self.editor.doc.layers)
+
+    def _maybe_rebuild(self) -> None:
+        if self._row_signature() != self._signature:
+            self.rebuild()
+
     def rebuild(self) -> None:
+        self._signature = self._row_signature()
         self._syncing = True
         try:
             self.list.clear()
@@ -147,8 +159,8 @@ class LayersPanel(QWidget):
         edit = edits.reorder_from(old, self._ids_bottom_to_top())
         if edit is not None:
             self.editor.push(edit)
-        else:
-            self.rebuild()  # restore row widgets Qt dropped during the move
+        # Always rebuild: Qt drops the moved row's widget during a drag-and-drop.
+        self.rebuild()
 
     def _rename(self, item: QListWidgetItem) -> None:
         lid = item.data(ID_ROLE)

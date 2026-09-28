@@ -105,3 +105,22 @@ def test_duplicate():
     e = edits.duplicate(doc, "L0")
     _check_do_undo(e, doc)
     assert doc.layers[1].source == "a0" and doc.layers[1].id != "L0"
+
+
+def test_set_adjustments_and_drag_merge():
+    from lookbox.core.model import Adjustments, ColorBand
+    doc = _doc()
+    a0 = doc.layer("L0").adjust
+    _check_do_undo(edits.SetAdjustments("L0", a0, Adjustments(brightness=20)), doc)
+    doc = _doc()
+    first = edits.SetAdjustments("L0", Adjustments(), Adjustments(brightness=10), merge_key="drag-1")
+    first.apply(doc)
+    second = edits.SetAdjustments("L0", doc.layer("L0").adjust,
+                                  Adjustments(brightness=35, color_edit=[ColorBand(hue=10, saturation=5)]),
+                                  merge_key="drag-1")
+    second.apply(doc)
+    assert first.merge(second)
+    first.revert(doc)
+    assert doc.layer("L0").adjust == Adjustments()  # one undo step undoes the whole drag
+    first.apply(doc)
+    assert doc.layer("L0").adjust.color_edit[0].saturation == 5

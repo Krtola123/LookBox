@@ -91,3 +91,18 @@ def test_failed_save_leaves_existing_file_intact(tmp_path):
     with pytest.raises(serialize.ProjectError):
         serialize.save(path, broken, store)
     assert open(path, "rb").read() == good
+
+
+def test_adjustments_roundtrip_and_old_files_load(tmp_path):
+    from lookbox.core.model import Adjustments, ColorBand, document_from_dict, document_to_dict
+    doc, store = _doc(tmp_path)
+    edits.SetAdjustments(doc.layers[0].id, doc.layers[0].adjust, Adjustments(
+        brightness=12, invert=True, color_edit=[ColorBand(hue=33.5, hue_shift=-40)])).apply(doc)
+    doc2, store2 = serialize.from_bytes(serialize.to_bytes(doc, store))
+    assert doc2 == doc
+    assert np.array_equal(render(doc2, store2), render(doc, store))
+    # An M1/M2 file has no "adjust" key at all: it must load with neutral adjustments.
+    d = document_to_dict(doc)
+    for layer in d["layers"]:
+        del layer["adjust"]
+    assert all(layer.adjust == Adjustments() for layer in document_from_dict(d).layers)

@@ -9,6 +9,7 @@ swaps in the sharper one when it lands.
 from __future__ import annotations
 
 import copy
+import threading
 
 from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal, Slot
 
@@ -16,7 +17,7 @@ from lookbox.core.assets import AssetStore
 from lookbox.core.model import ImageLayer
 from lookbox.core.render.cache import LRUCache
 from lookbox.core.render.levels import MIN_LEVEL, to_display_bgra
-from lookbox.core.render.pipeline import render_key, render_layer
+from lookbox.core.render.pipeline import Cancelled, render_key, render_layer
 
 CACHE_BUDGET_BYTES = 4 * 1024**3  # §6.2 default; becomes a user setting later
 
@@ -29,15 +30,19 @@ class _Emitter(QObject):
 
 class _Job(QRunnable):
     def __init__(self, layer: ImageLayer, store: AssetStore, level: float, key: str,
-                 cache: LRUCache, emitter: _Emitter) -> None:
+                 cache: LRUCache, emitter: _Emitter, cancel: threading.Event) -> None:
         super().__init__()
         self.layer, self.store, self.level, self.key = layer, store, level, key
-        self.cache, self.emitter = cache, emitter
+        self.cache, self.emitter, self.cancel = cache, emitter, cancel
 
     def run(self) -> None:
         try:
-            bgra = to_display_bgra(render_layer(self.layer, self.store, self.level))
+            if self.cancel.is_set():
+                return  # superseded before it even started
+            bgra = to_display_bgra(render_layer(self.layer, self.store, self.level, self.cancel))
             self.cache.put((self.key, self.level), bgra)
+        except Cancelled:
+            return  # a newer version of this layer was requested; nothing to report
         except Exception as exc:  # reported to the UI, never swallowed (§16.5)
             self.emitter.failed.emit(self.key, self.level, str(exc))
         else:
@@ -54,7 +59,9 @@ class RenderService(QObject):
         self.pool = QThreadPool(self)
         # Leave headroom for the UI thread and the OS.
         self.pool.setMaxThreadCount(max(1, QThread.idealThreadCount() - 2))
-        self._inflight: set[tuple[str, float]] = set()
+        # (key, level) → (layer id, cancel event). A newer request for the same layer
+        # cancels the older ones, so a slider drag doesn't queue up dozens of stale renders.
+        self._inflight: dict[tuple[str, float], tuple[str, threading.Event]] = {}
         self._failed: set[tuple[str, float]] = set()  # never retried in a loop
         self._emitter = _Emitter()
         self._emitter.done.connect(self._on_done)
@@ -67,10 +74,18 @@ class RenderService(QObject):
         if arr is not None:
             return arr
         if (key, level) not in self._inflight and (key, level) not in self._failed:
-            self._inflight.add((key, level))
+            self._cancel_stale(layer.id, key)
+            ev = threading.Event()
+            self._inflight[(key, level)] = (layer.id, ev)
             # Snapshot the layer: the document may change while the job runs.
-            self.pool.start(_Job(copy.deepcopy(layer), store, level, key, self.cache, self._emitter))
+            self.pool.start(_Job(copy.deepcopy(layer), store, level, key, self.cache, self._emitter, ev))
         return None
+
+    def _cancel_stale(self, layer_id: str, current_key: str) -> None:
+        for k, (lid, ev) in list(self._inflight.items()):
+            if lid == layer_id and k[0] != current_key:
+                ev.set()
+                del self._inflight[k]
 
     def best_cached(self, key: str) -> tuple[float, object] | None:
         """Sharpest level already cached for `key`, as (level, array)."""
@@ -84,22 +99,24 @@ class RenderService(QObject):
         return None
 
     def clear(self) -> None:
-        self.pool.clear()  # drop queued jobs; running ones finish harmlessly
+        self.pool.clear()  # drop queued jobs
+        for _, ev in self._inflight.values():
+            ev.set()  # and stop running ones early
         self._inflight.clear()
         self._failed.clear()
         self.cache.clear()
 
     def shutdown(self) -> None:
-        self.pool.clear()
+        self.clear()
         self.pool.waitForDone()
 
     @Slot(str, float)
     def _on_done(self, key: str, level: float) -> None:
-        self._inflight.discard((key, level))
+        self._inflight.pop((key, level), None)
         self.ready.emit(key, level)
 
     @Slot(str, float, str)
     def _on_failed(self, key: str, level: float, message: str) -> None:
-        self._inflight.discard((key, level))
+        self._inflight.pop((key, level), None)
         self._failed.add((key, level))
         self.failed.emit(f"Couldn't render a layer preview: {message}")

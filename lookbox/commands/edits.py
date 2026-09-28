@@ -169,3 +169,27 @@ def duplicate(doc: Document, layer_id: str, offset: float = 20.0) -> AddLayer:
     dup.locked = False
     dup.transform = replace(src.transform, x=src.transform.x + offset, y=src.transform.y + offset)
     return AddLayer(dup, index=doc.layer_index(layer_id) + 1, text="Duplicate layer")
+
+
+class SetAdjustments(Edit):
+    """Replace a layer's Adjustments. Slider drags pass a merge_key unique to that
+    drag, so one drag = one undo step (§4.2)."""
+
+    def __init__(self, layer_id: str, old, new, text: str = "Adjust", merge_key: str | None = None) -> None:
+        self.layer_id = layer_id
+        self.old = copy.deepcopy(old)
+        self.new = copy.deepcopy(new)
+        self.text = text
+        self.merge_key = merge_key
+
+    def apply(self, doc: Document) -> None:
+        doc.layer(self.layer_id).adjust = copy.deepcopy(self.new)
+
+    def revert(self, doc: Document) -> None:
+        doc.layer(self.layer_id).adjust = copy.deepcopy(self.old)
+
+    def merge(self, newer: Edit) -> bool:
+        if not isinstance(newer, SetAdjustments) or newer.layer_id != self.layer_id:
+            return False
+        self.new = copy.deepcopy(newer.new)
+        return True
