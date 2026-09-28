@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         bar.addAction(self.act_duplicate)
         bar.addAction(self.act_delete)
         spacer = QWidget()
+        spacer.setObjectName("barSpacer")
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
         bar.addAction(self.act_fit)

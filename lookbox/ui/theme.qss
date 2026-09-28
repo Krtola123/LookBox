@@ -43,6 +43,7 @@ QToolButton#primaryButton {
 QToolButton#primaryButton:hover { background: #9a55ff; }
 QToolButton#primaryButton:disabled { background: #3b2c5c; color: #9a93ad; }
 
+QWidget#barSpacer { background: transparent; }
 QLabel#zoomLabel { color: #b7b8bd; background: transparent; }
 
 QTabWidget#contextPanel::pane { border: none; border-left: 1px solid #2a2b2f; background: #1c1d20; }
