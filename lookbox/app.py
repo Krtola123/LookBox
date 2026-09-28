@@ -6,9 +6,10 @@ import os
 import sys
 
 import lookbox  # noqa: F401  (EXR env var before cv2)
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from lookbox.core import serialize
+from lookbox.crash import ErrorReporter
 from lookbox.ui.main_window import MainWindow
 
 
@@ -25,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyle("Fusion")
     with open(_resource("theme.qss"), encoding="utf-8") as fh:
         app.setStyleSheet(fh.read())
+
+    # Errors become a dialog + a log entry instead of a silent exit.
+    ErrorReporter(show=lambda title, msg: QMessageBox.critical(None, title, msg)).install()
 
     win = MainWindow()
     win.show()

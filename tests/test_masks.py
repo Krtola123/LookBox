@@ -182,3 +182,30 @@ def test_mask_survives_save_and_old_files_load():
     d = document_to_dict(doc)
     del d["layers"][0]["mask"]
     assert document_from_dict(d).layers[0].mask is None
+
+
+def test_remove_background_keeps_the_background_as_its_own_layer():
+    from lookbox.core.model import AssetInfo, DropShadow, Effects
+    mask = _disc_mask()
+    doc, store = _doc_with_mask(np.ones_like(mask))
+    layer = doc.layers[0]
+    layer.mask = None
+    layer.effects = Effects(shadow=DropShadow())
+    minfo = store.add_bytes(M.encode_mask_png(mask), ".png", "mask")
+    before = copy.deepcopy(doc)
+    e = edits.remove_background(doc, "L", LayerMask(asset=minfo.id), minfo, keep_background=True)
+    e.apply(doc)
+    assert [ly.name for ly in doc.layers] == [f"{layer.name} background", layer.name]  # background below
+    bg, subject = doc.layers
+    assert bg.source == subject.source and bg.mask.asset == subject.mask.asset  # no pixels copied
+    assert bg.mask.invert and not subject.mask.invert and not bg.effects.active()
+    no_fx = copy.deepcopy(subject)
+    no_fx.effects = Effects()  # compare the cut itself, not the subject's shadow
+    subject_alpha = render_layer(no_fx, store)[:, :, 3]
+    bg_alpha = render_layer(bg, store)[:, :, 3]
+    assert np.allclose(subject_alpha + bg_alpha, 1.0, atol=1e-4)  # together they're the whole photo
+    e.revert(doc)
+    assert doc == before  # one undo step
+    only = edits.remove_background(doc, "L", LayerMask(asset=minfo.id), minfo, keep_background=False)
+    only.apply(doc)
+    assert len(doc.layers) == 1 and doc.layers[0].mask.asset == minfo.id

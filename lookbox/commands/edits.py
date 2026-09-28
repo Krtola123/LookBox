@@ -299,3 +299,24 @@ def extract_to_layer(doc: Document, layer_id: str) -> Batch:
     cut.locked = False
     return Batch([AddLayer(cut, index=doc.layer_index(layer_id) + 1),
                   SetMask(layer_id, src.mask, None)], text="Extract to new layer")
+
+
+def remove_background(doc: Document, layer_id: str, mask, asset: AssetInfo | None,
+                      keep_background: bool) -> Edit:
+    """Apply a background-removal mask; optionally keep what was removed as its own
+    layer right below (same source, same mask inverted, no effects), so the backdrop
+    can be edited, blurred or hidden separately. One undo step either way."""
+    from lookbox.core.model import new_id
+
+    layer = doc.layer(layer_id)
+    set_mask = SetMask(layer_id, layer.mask, mask, asset=asset, text="Remove background")
+    if not keep_background:
+        return set_mask
+    bg = copy.deepcopy(layer)
+    bg.id = new_id()
+    bg.name = f"{layer.name} background"
+    bg.mask = copy.deepcopy(mask)
+    bg.mask.invert = not mask.invert
+    bg.effects = type(layer.effects)()  # a shadow/glow on the leftover background makes no sense
+    bg.locked = False
+    return Batch([set_mask, AddLayer(bg, index=doc.layer_index(layer_id))], text="Remove background")

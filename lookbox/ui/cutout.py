@@ -17,6 +17,7 @@ from lookbox.ui.ai_jobs import DownloadJob, RemoveBackgroundJob
 from lookbox.ui.editor import Editor
 
 SETTING_MODEL = "ai/background_model"
+SETTING_KEEP_BG = "ai/keep_background"
 
 
 class CutoutController(QObject):
@@ -31,7 +32,7 @@ class CutoutController(QObject):
         self.registry = {k: v for k, v in load_registry().items() if v.task == "background"}
         self._job = None
         self._progress: QProgressDialog | None = None
-        self._pending: tuple[str, bool] | None = None  # (layer id, refine) waiting on a download
+        self._pending: tuple[str, bool, bool] | None = None  # (layer id, refine, keep bg) waiting on a download
         self._run_ctx: tuple | None = None
 
     @property
@@ -63,6 +64,14 @@ class CutoutController(QObject):
         return chosen
 
     # ------------------------------------------------------------ remove background
+    @property
+    def keep_background(self) -> bool:
+        return self.settings.value(SETTING_KEEP_BG, True, type=bool)
+
+    @keep_background.setter
+    def keep_background(self, on: bool) -> None:
+        self.settings.setValue(SETTING_KEEP_BG, bool(on))
+
     def remove_background(self, layer_id: str, refine: bool) -> None:
         if self.busy:
             return
@@ -75,10 +84,10 @@ class CutoutController(QObject):
         if spec is None:
             return
         if not is_ready(spec):
-            self._pending = (layer_id, refine)
+            self._pending = (layer_id, refine, self.keep_background)
             self._start_download(spec)
             return
-        self._start_run(spec, layer_id, refine)
+        self._start_run(spec, layer_id, refine, self.keep_background)
 
     def _start_download(self, spec: ModelSpec) -> None:
         job = DownloadJob(spec)
@@ -108,13 +117,13 @@ class CutoutController(QObject):
         if pending is not None and spec is not None:
             self._start_run(spec, *pending)
 
-    def _start_run(self, spec: ModelSpec, layer_id: str, refine: bool) -> None:
+    def _start_run(self, spec: ModelSpec, layer_id: str, refine: bool, keep_bg: bool) -> None:
         doc = self.editor.doc
         if not doc.has_layer(layer_id) or not isinstance(doc.layer(layer_id), ImageLayer):
             return
         layer = doc.layer(layer_id)
         rgba = self.editor.store.pixels(layer.source)  # read-only; the job doesn't modify it
-        self._run_ctx = (self.editor.generation, layer_id, layer.source, self.editor.store)
+        self._run_ctx = (self.editor.generation, layer_id, layer.source, self.editor.store, keep_bg)
         job = RemoveBackgroundJob(self.manager, spec, rgba, refine)
         dlg = QProgressDialog("Removing the background…\n(the first run on a GPU can take a little longer)",
                               "Cancel", 0, 0, self.window)
@@ -135,7 +144,7 @@ class CutoutController(QObject):
         if ctx is None:
             self.status.emit("Background removal cancelled.", 4000)
             return
-        generation, layer_id, source, store = ctx
+        generation, layer_id, source, store, keep_bg = ctx
         doc = self.editor.doc
         if (generation != self.editor.generation or store is not self.editor.store or not doc.has_layer(layer_id)
                 or getattr(doc.layer(layer_id), "source", None) != source):
@@ -146,10 +155,9 @@ class CutoutController(QObject):
         except ImageError as exc:
             QMessageBox.warning(self.window, "Background removal", str(exc))
             return
-        old = doc.layer(layer_id).mask
-        self.editor.push(edits.SetMask(layer_id, old, LayerMask(asset=info.id), asset=info,
-                                       text="Remove background"))
-        self.status.emit(f"Background removed. {notice}", 6000)
+        self.editor.push(edits.remove_background(doc, layer_id, LayerMask(asset=info.id), info, keep_bg))
+        kept = " The background is on its own layer below." if keep_bg else ""
+        self.status.emit(f"Background removed.{kept} {notice}", 8000)
 
     # ------------------------------------------------------------ job plumbing
     def _begin(self, job, dlg: QProgressDialog) -> None:

@@ -57,6 +57,8 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Remove background | **Adjust** tab → Cut-out → **Remove background**. First time: pick *Best quality* (973 MB, for 8 GB+ GPUs) or *Fast* (224 MB), downloaded once and checked against its published checksum. Runs on your GPU (DirectML), or the CPU if that fails. Non-destructive: it adds a layer mask |
 | Fix the cut-out | **Edge shift** and **Feather** sliders, **Invert**, and **Brush…**: paint Erase/Restore on the canvas (red = hidden; Alt flips the mode, [ ] size, Enter done, Esc cancel). No AI needed: **Cut out by hand…** starts from a fully visible layer |
 | Keep the thing | **Extract to new layer**: the cut-out goes on its own layer above; the original shows everything again |
+| Keep the background | On by default ("Keep the background as its own layer"): Remove background also puts what was removed on a layer right below, so you can blur, adjust or hide it. One undo step |
+| If something breaks | LookBox shows a dialog instead of closing and writes the details to `%LOCALAPPDATA%\LookBox\logs\lookbox.log`. Send that file |
 | Effects | **Style** tab: Shadow (direction, distance, blur, spread, floor squash, colour; presets **Soft drop** and **Contact shadow**), Glow, Outline (outside/centre), Layer blur. Sizes are canvas pixels and the shadow direction stays put when you rotate or resize the layer |
 
 **Tips:** blend modes preview against the checkerboard on a transparent canvas; add a backdrop

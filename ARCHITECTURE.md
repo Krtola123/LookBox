@@ -252,6 +252,7 @@ All selection tools produce a **float32 mask** at the layer's source resolution.
 **Actions on a mask:**
 - *Apply as layer mask* (non-destructive; this is "remove background").
 - *Extract to new layer*: a new ImageLayer referencing the **same source asset** with the mask applied. The original stays untouched underneath. This is our "Magic Grab". The hole is not filled (non-goal).
+- *Keep the background* (default on, remembered): Remove background also adds the removed part as a layer right below (same source, same mask inverted, effects cleared) in the same undo step. Known: at soft edges, subject over background isn't perfectly opaque (α + (1−α)² < 1), a faint seam, as in any layer split.
 
 The mask edit UI is a mode: the layer shows unmasked, a red overlay marks hidden areas, Done/Cancel (Enter/Esc), Alt flips erase/restore, [ ] resize. One brush session = one undo step. Switching layers applies the session; so does New/Open/Close (before the save prompt, so painting is never lost silently).
 
@@ -424,6 +425,10 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the end.
 
 ---
+
+## 15a. Error reporting (added after M6)
+
+`lookbox/crash.py`: Python errors anywhere (UI slots, worker threads) are appended with their traceback to `%LOCALAPPDATA%\LookBox\logs\lookbox.log` and, on the UI thread, shown in a dialog instead of closing the app (repeats within 5 s aren't re-shown). Native crashes write their stack via `faulthandler` to the same file.
 
 ## 16. Rules for the AI assistant
 

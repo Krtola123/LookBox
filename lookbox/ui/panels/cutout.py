@@ -54,6 +54,12 @@ class CutoutSection(QWidget):
         self.refine.setObjectName("invertToggle")
         self.refine.setToolTip("Snaps the mask to the photo's edges. Helps fine strands; can add noise on clean edges.")
         col.addWidget(self.refine)
+        self.keep_bg = QCheckBox("Keep the background as its own layer")
+        self.keep_bg.setObjectName("invertToggle")
+        self.keep_bg.setToolTip("Puts what was removed on a layer below, so you can blur, adjust or hide it separately")
+        self.keep_bg.setChecked(controller.keep_background)
+        self.keep_bg.toggled.connect(lambda on: setattr(controller, "keep_background", on))
+        col.addWidget(self.keep_bg)
 
         # ---- when the layer has a mask ----
         self.mask_box = QWidget()
