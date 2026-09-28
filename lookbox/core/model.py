@@ -16,9 +16,6 @@ import uuid
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
-BLEND_MODES = ("normal", "multiply", "screen", "overlay", "add", "soft_light")
-
-
 def new_id() -> str:
     return uuid.uuid4().hex
 
@@ -87,6 +84,50 @@ class Adjustments:
 
 
 @dataclass(kw_only=True)
+class GradientFade:
+    """Gradient transparency (§8 'Gradient fade'): multiplies the layer's alpha.
+
+    Parametrised as an axis rather than two points so the panel can drive it with
+    sliders: `start`/`end` are positions 0–1 along the axis (linear) or radius
+    fractions of the half-diagonal (radial). Fully opaque before `start`, fully
+    transparent after `end`.
+    """
+
+    kind: str = "linear"  # "linear" | "radial"
+    angle_deg: float = 90.0  # linear: direction it fades *towards* (90 = downwards)
+    start: float = 0.5
+    end: float = 1.0
+    invert: bool = False
+
+
+BLEND_MODES = ("normal", "multiply", "screen", "overlay", "add", "soft_light")
+FILL_KINDS = ("solid", "linear", "radial")
+
+
+def _default_stops() -> list["GradientStop"]:
+    return [GradientStop(pos=0.0, color=(0.23, 0.24, 0.27, 1.0)),
+            GradientStop(pos=1.0, color=(0.06, 0.063, 0.075, 1.0))]
+
+
+@dataclass(kw_only=True)
+class GradientStop:
+    pos: float  # 0–1
+    color: tuple[float, float, float, float]  # straight RGBA, 0–1, sRGB-encoded
+
+
+@dataclass(kw_only=True)
+class Fill:
+    """Solid colour or gradient. Solid uses the first stop's colour."""
+
+    kind: str = "radial"
+    stops: list[GradientStop] = field(default_factory=_default_stops)
+    angle_deg: float = 90.0  # linear: 0 = left→right, 90 = top→bottom
+    cx: float = 0.5  # radial centre, layer-local 0–1
+    cy: float = 0.45
+    radius: float = 0.8  # radial: where the last stop lands, fraction of the half-diagonal
+
+
+@dataclass(kw_only=True)
 class AssetInfo:
     """Metadata for an asset. The bytes and decoded pixels are in AssetStore."""
 
@@ -107,6 +148,7 @@ class Layer:
     blend_mode: str = "normal"
     transform: Transform = field(default_factory=Transform)
     adjust: Adjustments = field(default_factory=Adjustments)
+    fade: GradientFade | None = None
 
     kind = "base"  # class attribute, not a field
 
@@ -118,6 +160,17 @@ class ImageLayer(Layer):
     passes: dict[str, str] = field(default_factory=dict)
 
     kind = "image"
+
+
+@dataclass(kw_only=True)
+class FillLayer(Layer):
+    """A generated backdrop: solid colour or gradient, `width` × `height` px before transform."""
+
+    fill: Fill = field(default_factory=Fill)
+    width: int = 1920
+    height: int = 1080
+
+    kind = "fill"
 
 
 @dataclass(kw_only=True)
@@ -175,17 +228,36 @@ def layer_to_dict(layer: Layer) -> dict:
     return out
 
 
-def layer_from_dict(data: dict) -> Layer:
-    kind = data.get("kind")
-    if kind != "image":
-        raise ValueError(f"Unknown layer kind: {kind!r}")
-    d = _known(ImageLayer, data)
+def _layer_common(cls: type, data: dict) -> dict:
+    d = _known(cls, data)
     d["transform"] = Transform(**_known(Transform, d.get("transform", {})))
     d["adjust"] = adjustments_from_dict(d.get("adjust", {}))
-    if d.get("crop") is not None:
-        d["crop"] = tuple(int(v) for v in d["crop"])
-    d["passes"] = dict(d.get("passes", {}))
-    return ImageLayer(**d)
+    fade = d.get("fade")
+    d["fade"] = GradientFade(**_known(GradientFade, fade)) if fade is not None else None
+    return d
+
+
+def fill_from_dict(data: dict) -> Fill:
+    f = _known(Fill, data)
+    if "stops" in f:
+        f["stops"] = [GradientStop(pos=float(s["pos"]), color=tuple(float(c) for c in s["color"]))
+                      for s in f["stops"]]
+    return Fill(**f)
+
+
+def layer_from_dict(data: dict) -> Layer:
+    kind = data.get("kind")
+    if kind == "image":
+        d = _layer_common(ImageLayer, data)
+        if d.get("crop") is not None:
+            d["crop"] = tuple(int(v) for v in d["crop"])
+        d["passes"] = dict(d.get("passes", {}))
+        return ImageLayer(**d)
+    if kind == "fill":
+        d = _layer_common(FillLayer, data)
+        d["fill"] = fill_from_dict(d.get("fill", {}))
+        return FillLayer(**d)
+    raise ValueError(f"Unknown layer kind: {kind!r}")
 
 
 def adjustments_from_dict(data: dict) -> Adjustments:

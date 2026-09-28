@@ -14,7 +14,7 @@ from lookbox.commands import edits
 from lookbox.commands.qt import EditCommand
 from lookbox.core import serialize
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import AssetInfo, Document, ImageLayer, Size, Transform
+from lookbox.core.model import AssetInfo, Document, ImageLayer, Layer, Size, Transform
 
 
 class Editor(QObject):
@@ -50,11 +50,10 @@ class Editor(QObject):
             self.selected = layer_id
             self.selection_changed.emit()
 
-    def selected_layer(self) -> ImageLayer | None:
+    def selected_layer(self) -> Layer | None:
         if self.selected is None or not self.doc.has_layer(self.selected):
             return None
-        layer = self.doc.layer(self.selected)
-        return layer if isinstance(layer, ImageLayer) else None
+        return self.doc.layer(self.selected)
 
     # ---- import (files are decoded off-thread by ui/jobs.ImportJob) ----
     def add_imported(self, store: AssetStore, infos: list[AssetInfo],

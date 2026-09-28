@@ -32,15 +32,60 @@ def choose_level(screen_scale: float) -> float:
     return 2.0 ** math.ceil(math.log2(screen_scale))
 
 
-def to_display_bgra(premult: np.ndarray) -> np.ndarray:
-    """Premultiplied float RGBA → uint8 BGRA (Qt's ARGB32_Premultiplied byte order)."""
-    q = np.empty(premult.shape[:2] + (4,), dtype=np.uint8)
-    # Rounding each channel independently can push a colour above its alpha; clamp.
-    a = np.clip(np.rint(premult[:, :, 3] * 255.0), 0, 255)
+_NOISE_TILE = 64
+
+
+def _tpdf_tile() -> np.ndarray:
+    rng = np.random.default_rng(1234)
+    shape = (_NOISE_TILE, _NOISE_TILE, 4)
+    return (rng.random(shape, dtype=np.float32) - rng.random(shape, dtype=np.float32))
+
+
+_TPDF = _tpdf_tile()  # triangular noise in (−1, 1) LSB, tiled: cheap and deterministic
+
+
+_noise_cache: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _noise(h: int, w: int) -> np.ndarray:
+    n = _noise_cache.get((h, w))
+    if n is None:
+        reps = ((h + _NOISE_TILE - 1) // _NOISE_TILE, (w + _NOISE_TILE - 1) // _NOISE_TILE, 1)
+        n = np.ascontiguousarray(np.tile(_TPDF, reps)[:h, :w]) + np.float32(0.5)  # +0.5: rounding
+        if len(_noise_cache) > 8:
+            _noise_cache.clear()
+        _noise_cache[(h, w)] = n
+    return n
+
+
+def to_display_bgra(premult: np.ndarray, dither: bool = True) -> np.ndarray:
+    """Premultiplied float RGBA → uint8 BGRA (Qt's ARGB32_Premultiplied byte order).
+
+    Dithered like the PNG export so gradients don't band on screen. Pass
+    dither=False for untouched 8-bit sources shown 1:1, which should stay exact.
+    """
+    h, w = premult.shape[:2]
+    v = premult * np.float32(255.0)
+    if dither:
+        v += _noise(h, w)
+        np.floor(v, out=v)
+    else:
+        np.rint(v, out=v)
+    np.clip(v, 0, 255, out=v)
+    q = np.empty((h, w, 4), dtype=np.uint8)
+    a = v[:, :, 3]
     q[:, :, 3] = a
     for dst, src in ((0, 2), (1, 1), (2, 0)):
-        q[:, :, dst] = np.minimum(np.clip(np.rint(premult[:, :, src] * 255.0), 0, 255), a)
+        q[:, :, dst] = np.minimum(v[:, :, src], a)  # premultiplied colour can't exceed alpha
     return q
+
+
+def needs_dither(layer, level: float) -> bool:
+    """Everything except an untouched image shown at full resolution."""
+    from lookbox.core.model import ImageLayer  # local: keeps this module's imports light
+
+    return not (isinstance(layer, ImageLayer) and level >= 1.0 and layer.adjust.is_identity()
+                and layer.fade is None)
 
 
 def thumbnail_array(px: np.ndarray, size: int) -> np.ndarray:

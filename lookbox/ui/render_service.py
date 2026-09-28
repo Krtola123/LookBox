@@ -14,9 +14,9 @@ import threading
 from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal, Slot
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import ImageLayer
+from lookbox.core.model import Layer
 from lookbox.core.render.cache import LRUCache
-from lookbox.core.render.levels import MIN_LEVEL, to_display_bgra
+from lookbox.core.render.levels import MIN_LEVEL, needs_dither, to_display_bgra
 from lookbox.core.render.pipeline import Cancelled, render_key, render_layer
 
 CACHE_BUDGET_BYTES = 4 * 1024**3  # §6.2 default; becomes a user setting later
@@ -29,7 +29,7 @@ class _Emitter(QObject):
 
 
 class _Job(QRunnable):
-    def __init__(self, layer: ImageLayer, store: AssetStore, level: float, key: str,
+    def __init__(self, layer: Layer, store: AssetStore, level: float, key: str,
                  cache: LRUCache, emitter: _Emitter, cancel: threading.Event) -> None:
         super().__init__()
         self.layer, self.store, self.level, self.key = layer, store, level, key
@@ -39,7 +39,8 @@ class _Job(QRunnable):
         try:
             if self.cancel.is_set():
                 return  # superseded before it even started
-            bgra = to_display_bgra(render_layer(self.layer, self.store, self.level, self.cancel))
+            px = render_layer(self.layer, self.store, self.level, self.cancel)
+            bgra = to_display_bgra(px, dither=needs_dither(self.layer, self.level))
             self.cache.put((self.key, self.level), bgra)
         except Cancelled:
             return  # a newer version of this layer was requested; nothing to report
@@ -67,7 +68,7 @@ class RenderService(QObject):
         self._emitter.done.connect(self._on_done)
         self._emitter.failed.connect(self._on_failed)
 
-    def request(self, layer: ImageLayer, store: AssetStore, level: float, key: str | None = None):
+    def request(self, layer: Layer, store: AssetStore, level: float, key: str | None = None):
         """Return the cached BGRA array for (layer, level), or None and start rendering it."""
         key = key or render_key(layer)
         arr = self.cache.get((key, level))

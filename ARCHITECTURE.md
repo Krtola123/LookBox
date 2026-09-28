@@ -112,10 +112,12 @@ ImageLayer(Layer)
 TextLayer(Layer)
   text, font_family, font_size, weight, italic, color, align, letter_spacing, line_height, box_width
 
-FillLayer(Layer)
-  kind: "solid" | "linear" | "radial"
-  stops: list[(pos 0–1, RGBA)]
-  angle / centre / radius           # depending on kind
+FillLayer(Layer)                    # backdrops; no asset
+  fill: Fill                        # kind "solid" | "linear" | "radial", stops [(pos 0–1, RGBA)],
+                                    # angle_deg (linear), cx/cy/radius (radial, box-relative)
+  width, height                     # size before transform (defaults to the canvas)
+
+Layer.fade: GradientFade | None     # kind linear|radial, angle_deg, start/end (0–1), invert
 ```
 
 **Assets** are stored once and referenced by hash. Duplicating a layer never copies pixels.
@@ -159,6 +161,8 @@ After all layers: `global_adjust` → `global_lut` → output.
 - While a level renders, the closest cached level stays on screen.
 - Radius-based parameters (blur, shadow blur, clarity, sharpness, glow) are specified in **full-resolution pixels** and scaled by the level at render time, so every level looks like a downscaled export.
 - **Export** renders everything in float at full resolution (`pipeline.render`), in a cancellable worker with progress. Export is the ground truth; the preview is 8-bit.
+- **Blend modes** on screen use QPainter composition modes, which implement the same W3C formulas as `core/render/blend.py` (tested against the spec). Caveat: on a *transparent* canvas the preview blends with the checkerboard while the export blends with transparency; with a backdrop or background colour they match.
+- **Dithering:** preview levels are dithered like the PNG export (TPDF noise, cached tile), except untouched images at full resolution, which stay exact.
 - *Known future issue:* `global_adjust`/`global_lut` (M10) act on the flattened image, which the Qt composite doesn't have. Plan: preview them with a worker-rendered composite at screen resolution that updates after each change, keeping the Qt composite during drags.
 
 ### 6.4 Threading
@@ -218,7 +222,7 @@ UI details: each slider has a numeric box, double-click resets it to 0, a before
 | Outer glow | blur, spread, colour, opacity, blend (screen/add) | Same as shadow with no offset |
 | Outline | width, colour, opacity, position (outside/centre) | Distance transform on alpha. Mostly for text |
 | Layer blur | radius | Gaussian on premultiplied RGBA |
-| Gradient fade | linear/radial, start and end points (layer-local), invert | Multiplies alpha. This is the "gradient transparent" tool |
+| Gradient fade | linear/radial, direction (linear), start and end (0–1 along the axis / radius), invert | Multiplies alpha, smooth ramp. This is the "gradient transparent" tool. *Changed in M4:* an axis + start/end instead of two points, so plain sliders drive it; on-canvas handles can map onto the same fields later |
 
 The shadow canvas must extend beyond layer bounds (pad by blur + distance + spread).
 A shadow is a property of its layer. Never implement it as a separate layer.
@@ -323,7 +327,8 @@ lookbox/
     serialize.py          # .lookbox read/write + migrations
     render/
       pipeline.py         # §6.1 orchestration: render_layer, render_key, render (export)
-      levels.py           # preview level choice, display quantize, thumbnails
+      levels.py           # preview level choice, dithered display quantize, thumbnails
+      fill.py             # gradient fills + gradient fade masks
       adjust.py           # §7, one function per control + swatch suggestions
       effects.py          # §8
       blend.py
@@ -352,7 +357,7 @@ lookbox/
     jobs.py               # background workers (import, open, save, export)
     render_service.py     # thread pool + LRU cache for per-layer preview levels
     pixmaps.py            # layer thumbnails
-    panels/               # adjust.py (+ color_edit.py), layers.py; later: effects, filters, position, text
+    panels/               # adjust.py (+ color_edit.py), layer_style.py, layers.py; later: effects, filters, text
     widgets/              # slider_row.py; later: colour picker, gradient editor
     canvas/               # QGraphicsView, items, handles, mask overlay
       view.py             # mouse/keyboard/zoom

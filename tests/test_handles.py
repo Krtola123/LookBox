@@ -97,3 +97,19 @@ def test_layer_at_is_alpha_aware_and_skips_locked():
     doc.layers[1].locked = True
     assert H.layer_at(doc, store, 2, 5) == "bottom"
     assert H.layer_at(doc, store, 50, 50) is None
+
+
+def test_fill_layers_size_and_hit_by_box():
+    from lookbox.core.model import Fill, FillLayer, GradientStop
+    doc = Document(canvas=Size(w=100, h=100))
+    backdrop = FillLayer(id="bg", width=100, height=100, transform=Transform(x=50, y=50))
+    doc.layers = [backdrop]
+    assert H.layer_size(doc, backdrop) == (100, 100)
+    assert H.layer_at(doc, AssetStore(), 10, 90) == "bg"  # anywhere inside the box
+    assert H.layer_at(doc, AssetStore(), 150, 50) is None
+    backdrop.locked = True
+    assert H.layer_at(doc, AssetStore(), 10, 90) is None  # locked backdrops don't steal clicks
+    clear = FillLayer(id="clear", width=100, height=100, transform=Transform(x=50, y=50),
+                      fill=Fill(kind="solid", stops=[GradientStop(pos=0, color=(0, 0, 0, 0))]))
+    doc.layers = [clear]
+    assert H.layer_at(doc, AssetStore(), 10, 90) is None  # fully transparent fill isn't clickable

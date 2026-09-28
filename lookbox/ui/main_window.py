@@ -8,10 +8,12 @@ from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QSizePolicy, QT
                                QToolButton, QWidget)
 
 from lookbox.commands import edits
+from lookbox.core.model import FillLayer, Transform
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
 from lookbox.ui.panels.adjust import AdjustPanel
+from lookbox.ui.panels.layer_style import LayerPanel
 from lookbox.ui.panels.layers import LayersPanel
 from lookbox.ui.pixmaps import ThumbCache
 from lookbox.ui.render_service import RenderService
@@ -81,6 +83,8 @@ class MainWindow(QMainWindow):
         stack.redoTextChanged.connect(lambda t: self.act_redo.setToolTip(f"Redo {t} (Ctrl+Y)".replace("  ", " ")))
         self.act_undo.setEnabled(False)
         self.act_redo.setEnabled(False)
+        self.act_fill = self._action("Backdrop", self.add_backdrop, "Ctrl+B",
+                                     "Add a gradient backdrop behind everything (Ctrl+B)")
         self.act_duplicate = self._action("Duplicate", self.duplicate_layer, "Ctrl+D")
         self.act_delete = self._action("Delete", self.delete_layer)
         self.act_fit = self._action("Fit", self.canvas.fit, "Ctrl+0", "Fit to screen (Ctrl+0)")
@@ -130,6 +134,7 @@ class MainWindow(QMainWindow):
         select.setToolTip("Select, move, resize, rotate")
         rail.addAction(select)
         rail.addAction(self.act_import)
+        rail.addAction(self.act_fill)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, rail)
 
     def _build_panel(self) -> None:
@@ -138,8 +143,12 @@ class MainWindow(QMainWindow):
         self.adjust_panel = AdjustPanel(self.editor)
         self.adjust_panel.interactive.connect(self.canvas.layers.set_interactive)
         self.adjust_panel.compare.connect(self.canvas.layers.set_bypass)
+        self.layer_panel = LayerPanel(self.editor)
         tabs.addTab(self.adjust_panel, "Adjust")
+        tabs.addTab(self.layer_panel, "Layer")
         tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
+        self.tabs = tabs
+        self.editor.selection_changed.connect(self._follow_selection)
         tabs.setMinimumWidth(290)
         tabs.setMaximumWidth(360)
         dock = QDockWidget("", self)
@@ -181,7 +190,18 @@ class MainWindow(QMainWindow):
     def import_paths(self, paths: list[str], at) -> None:
         self.docs.import_paths(paths, at)
 
+    def _follow_selection(self) -> None:
+        """Selecting a backdrop while on Adjust (images only) jumps to the Layer tab."""
+        if isinstance(self.editor.selected_layer(), FillLayer) and self.tabs.currentWidget() is self.adjust_panel:
+            self.tabs.setCurrentWidget(self.layer_panel)
+
     # ------------------------------------------------------------ layer actions
+    def add_backdrop(self) -> None:
+        c = self.editor.doc.canvas
+        layer = FillLayer(name="Backdrop", width=c.w, height=c.h, transform=Transform(x=c.w / 2.0, y=c.h / 2.0))
+        self.editor.push(edits.AddLayer(layer, index=0, text="Add backdrop"))
+        self.editor.select(layer.id)
+
     def duplicate_layer(self) -> None:
         layer = self.editor.selected_layer()
         if layer is None:

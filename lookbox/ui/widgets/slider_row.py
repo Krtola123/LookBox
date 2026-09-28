@@ -1,6 +1,6 @@
-"""One Adjust-panel control: label, numeric box, slider (−100…100).
+"""One slider control: label, numeric box, slider (default −100…100).
 
-Double-click the slider to reset it to 0. `pressed`/`released` bracket a drag,
+Double-click the slider to reset it to its default. `pressed`/`released` bracket a drag,
 so the panel can make one drag = one undo step and switch the canvas to
 half-res previews while dragging.
 """
@@ -29,9 +29,11 @@ class SliderRow(QWidget):
     pressed = Signal()
     released = Signal()
 
-    def __init__(self, key: str, label: str, parent: QWidget | None = None) -> None:
+    def __init__(self, key: str, label: str, parent: QWidget | None = None, *, minimum: int = -100,
+                 maximum: int = 100, default: int = 0, suffix: str = "") -> None:
         super().__init__(parent)
         self.key = key
+        self.default = default
         self.setObjectName("sliderRow")
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 2, 0, 2)
@@ -41,7 +43,7 @@ class SliderRow(QWidget):
         self.label = QLabel(label)
         self.label.setObjectName("sliderLabel")
         self.slider = _Slider(Qt.Orientation.Horizontal)
-        self.slider.setRange(-100, 100)
+        self.slider.setRange(minimum, maximum)
         self.slider.setPageStep(10)
         self.slider.setObjectName("adjustSlider")
         if key in GRADIENTS:
@@ -49,10 +51,11 @@ class SliderRow(QWidget):
                 "QSlider::groove:horizontal { height: 6px; border-radius: 3px; "
                 f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, {GRADIENTS[key]}); }}")
         self.box = QSpinBox()
-        self.box.setRange(-100, 100)
+        self.box.setRange(minimum, maximum)
+        self.box.setSuffix(suffix)
         self.box.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.box.setFixedWidth(44)
+        self.box.setFixedWidth(52 if suffix else 44)
         self.box.setObjectName("sliderBox")
 
         grid.addWidget(self.label, 0, 0)
@@ -88,7 +91,7 @@ class SliderRow(QWidget):
             self.slider.setValue(v)  # → _from_slider → edited
 
     def _reset(self) -> None:
-        if self.slider.value() != 0:
+        if self.slider.value() != self.default:
             self.pressed.emit()
-            self.slider.setValue(0)
+            self.slider.setValue(self.default)
             self.released.emit()

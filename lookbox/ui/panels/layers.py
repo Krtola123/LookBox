@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QInputDialog, QLa
                                QListWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
-from lookbox.core.model import ImageLayer
+from lookbox.core.model import FillLayer, Layer
+from lookbox.core.render.fill import render_fill
 from lookbox.core.render.pipeline import layer_source
 from lookbox.ui.editor import Editor
 from lookbox.ui.pixmaps import ThumbCache
@@ -27,7 +28,7 @@ class _List(QListWidget):
 
 
 class _Row(QWidget):
-    def __init__(self, panel: "LayersPanel", layer: ImageLayer) -> None:
+    def __init__(self, panel: "LayersPanel", layer: Layer) -> None:
         super().__init__()
         self.setObjectName("layerRow")
         lay = QHBoxLayout(self)
@@ -38,8 +39,7 @@ class _Row(QWidget):
         thumb.setFixedSize(THUMB, THUMB)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumb.setObjectName("layerThumb")
-        px = layer_source(layer, panel.editor.store)
-        thumb.setPixmap(panel.thumbs.get((layer.source, layer.crop), px, THUMB - 4))
+        thumb.setPixmap(panel.thumbnail(layer))
         lay.addWidget(thumb)
 
         name = QLabel(layer.name)
@@ -108,8 +108,20 @@ class LayersPanel(QWidget):
     def _row_signature(self) -> tuple:
         """What the rows display. Transform/adjust edits don't change it, so a slider
         drag or a canvas drag doesn't rebuild the list 30 times a second."""
-        return tuple((layer.id, layer.name, layer.visible, layer.locked, layer.source,
-                      getattr(layer, "crop", None)) for layer in self.editor.doc.layers)
+        return tuple((layer.id, layer.name, layer.visible, layer.locked, getattr(layer, "source", None),
+                      getattr(layer, "crop", None), self._fill_key(layer)) for layer in self.editor.doc.layers)
+
+    @staticmethod
+    def _fill_key(layer: Layer):
+        return (repr(layer.fill), layer.width, layer.height) if isinstance(layer, FillLayer) else None
+
+    def thumbnail(self, layer: Layer):
+        size = THUMB - 4
+        if isinstance(layer, FillLayer):
+            s = min(size / layer.width, size / layer.height)
+            tw, th = max(1, round(layer.width * s)), max(1, round(layer.height * s))
+            return self.thumbs.get(("fill",) + self._fill_key(layer), render_fill(layer.fill, tw, th), size)
+        return self.thumbs.get((layer.source, layer.crop), layer_source(layer, self.editor.store), size)
 
     def _maybe_rebuild(self) -> None:
         if self._row_signature() != self._signature:
@@ -121,8 +133,6 @@ class LayersPanel(QWidget):
         try:
             self.list.clear()
             for layer in reversed(self.editor.doc.layers):
-                if not isinstance(layer, ImageLayer):
-                    continue
                 item = QListWidgetItem()
                 item.setData(ID_ROLE, layer.id)
                 item.setSizeHint(QSize(0, THUMB + 10))

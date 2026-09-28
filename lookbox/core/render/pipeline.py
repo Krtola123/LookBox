@@ -22,8 +22,8 @@ import cv2
 import numpy as np
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, ImageLayer, Layer, layer_to_dict
-from lookbox.core.render import adjust, blend
+from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, layer_to_dict
+from lookbox.core.render import adjust, blend, fill
 from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
 from lookbox.core.render.transform import warp_to_canvas
 
@@ -73,24 +73,38 @@ def level_size(w: int, h: int, level: float) -> tuple[int, int]:
     return max(1, round(w * level)), max(1, round(h * level))
 
 
-def render_layer(layer: ImageLayer, store: AssetStore, level: float = 1.0,
+def _base_pixels(layer: Layer, store: AssetStore, level: float) -> np.ndarray:
+    """Straight float32 RGBA at `level`: the layer's own pixels before any stage."""
+    if isinstance(layer, FillLayer):
+        return fill.render_fill(layer.fill, *level_size(layer.width, layer.height, level))
+    if isinstance(layer, ImageLayer):
+        src = layer_source(layer, store)
+        if level < 1.0:
+            h, w = src.shape[:2]
+            # True area average (not striding): skipping pixels would bring back shimmer.
+            src = cv2.resize(src, level_size(w, h, level), interpolation=cv2.INTER_AREA)
+        return src
+    raise TypeError(f"Can't render layer kind '{layer.kind}'.")
+
+
+def render_layer(layer: Layer, store: AssetStore, level: float = 1.0,
                  cancel: threading.Event | None = None) -> np.ndarray:
     """Pre-transform, pre-opacity layer pixels at `level` (1 = full res), premultiplied.
 
     Later stages must scale pixel radii by `level` (§6.3) so every level
     looks like a downscaled full-res render.
     """
-    src = layer_source(layer, store)
-    _check(cancel)
-    if level < 1.0:
-        h, w = src.shape[:2]
-        # True area average (not striding): skipping pixels would bring back shimmer.
-        src = cv2.resize(src, level_size(w, h, level), interpolation=cv2.INTER_AREA)
+    src = _base_pixels(layer, store, level)
     _check(cancel)
     # ---- §6.1 order: mask → adjust → LUT → blur → fade → effects (later milestones slot in) ----
     if not layer.adjust.is_identity():
         rgb = adjust.apply(src[:, :, :3], src[:, :, 3], layer.adjust, level, cancel)
         src = np.concatenate([rgb, src[:, :, 3:4]], axis=2)
+    if layer.fade is not None:
+        h, w = src.shape[:2]
+        src = src if src.flags.writeable and src.base is None else src.copy()
+        src[:, :, 3] *= fill.fade_mask(layer.fade, w, h)
+    _check(cancel)
     return premultiply(src)
 
 
@@ -112,8 +126,6 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0,
     for i, layer in enumerate(doc.layers):
         _check(cancel)
         if layer.visible and layer.opacity > 0.0:
-            if not isinstance(layer, ImageLayer):
-                raise TypeError(f"Can't render layer kind '{layer.kind}' yet.")
             src = render_layer(layer, store, 1.0, cancel)
             if layer.opacity < 1.0:
                 src *= np.float32(layer.opacity)  # after effects: fades the shadow too

@@ -8,12 +8,12 @@ Placement uses core.render.transform.level_matrix, the same math as export.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QImage, QPixmap, QTransform
+from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
 from dataclasses import replace
 
-from lookbox.core.model import Adjustments, ImageLayer, Transform
+from lookbox.core.model import Adjustments, Layer, Transform
 from lookbox.core.render.levels import MIN_LEVEL, choose_level, on_screen_scale
 from lookbox.core.render.pipeline import render_key
 from lookbox.core.render.transform import level_matrix
@@ -33,8 +33,36 @@ def bgra_to_pixmap(arr) -> QPixmap:
     return QPixmap.fromImage(img)  # copies, so `arr` may be freed afterwards
 
 
+# Qt's composition modes implement the same W3C formulas as core/render/blend.py.
+_QT_MODES = {
+    "normal": QPainter.CompositionMode.CompositionMode_SourceOver,
+    "multiply": QPainter.CompositionMode.CompositionMode_Multiply,
+    "screen": QPainter.CompositionMode.CompositionMode_Screen,
+    "overlay": QPainter.CompositionMode.CompositionMode_Overlay,
+    "add": QPainter.CompositionMode.CompositionMode_Plus,
+    "soft_light": QPainter.CompositionMode.CompositionMode_SoftLight,
+}
+
+
+class LayerItem(QGraphicsPixmapItem):
+    """A pixmap item that paints with its layer's blend mode."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.mode = _QT_MODES["normal"]
+
+    def paint(self, painter, option, widget=None) -> None:
+        if self.mode == _QT_MODES["normal"]:
+            super().paint(painter, option, widget)
+            return
+        painter.save()
+        painter.setCompositionMode(self.mode)
+        super().paint(painter, option, widget)
+        painter.restore()
+
+
 class _Entry:
-    def __init__(self, item: QGraphicsPixmapItem) -> None:
+    def __init__(self, item: LayerItem) -> None:
         self.item = item
         self.target_key = ""  # render key the layer has now
         self.want = 1.0  # level the screen needs
@@ -73,12 +101,10 @@ class LayerItems(QObject):
         doc = self.editor.doc
         alive = set()
         for z, layer in enumerate(doc.layers):
-            if not isinstance(layer, ImageLayer):
-                continue
             alive.add(layer.id)
             e = self.entries.get(layer.id)
             if e is None:
-                item = QGraphicsPixmapItem()
+                item = LayerItem()
                 item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
                 self.scene.addItem(item)
@@ -88,6 +114,10 @@ class LayerItems(QObject):
             e.item.setZValue(z)
             e.item.setVisible(layer.visible)
             e.item.setOpacity(layer.opacity)
+            mode = _QT_MODES.get(layer.blend_mode, _QT_MODES["normal"])
+            if e.item.mode != mode:
+                e.item.mode = mode
+                e.item.update()
             self._update_level(e, layer)
             self._place(e, self._transform_of(layer))
         for lid in list(self.entries):
@@ -139,19 +169,19 @@ class LayerItems(QObject):
             self._place(e, self._transform_of(layer))
 
     # ---- internals ----
-    def _effective(self, layer: ImageLayer) -> ImageLayer:
+    def _effective(self, layer: Layer) -> Layer:
         """The layer as it should be *shown* (before/after bypass drops adjustments)."""
         if layer.id == self._bypass and not layer.adjust.is_identity():
             return replace(layer, adjust=Adjustments())
         return layer
 
-    def _transform_of(self, layer: ImageLayer) -> Transform:
+    def _transform_of(self, layer: Layer) -> Transform:
         return self._live.get(layer.id, layer.transform)
 
     def _place(self, e: _Entry, t: Transform) -> None:
         e.item.setTransform(to_qtransform(level_matrix(t, e.w, e.h, e.lw, e.lh)))
 
-    def _update_level(self, e: _Entry, layer: ImageLayer) -> None:
+    def _update_level(self, e: _Entry, layer: Layer) -> None:
         e.want = choose_level(on_screen_scale(layer.transform, self.screen_scale))
         if layer.id in self._interactive:
             e.want = max(MIN_LEVEL, e.want / 2.0)

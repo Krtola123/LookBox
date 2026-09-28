@@ -193,3 +193,36 @@ class SetAdjustments(Edit):
             return False
         self.new = copy.deepcopy(newer.new)
         return True
+
+
+_STYLE_FIELDS = {"opacity", "blend_mode", "fade", "fill", "width", "height"}
+
+
+class SetLayerField(Edit):
+    """Change one layer setting (opacity, blend mode, fade, fill, fill size).
+
+    Slider drags pass a per-drag merge_key: one drag = one undo step."""
+
+    def __init__(self, layer_id: str, name: str, old, new, text: str = "Change layer",
+                 merge_key: str | None = None) -> None:
+        if name not in _STYLE_FIELDS:
+            raise ValueError(f"Not editable with SetLayerField: {name}")
+        self.layer_id, self.name = layer_id, name
+        self.old, self.new = copy.deepcopy(old), copy.deepcopy(new)
+        self.text, self.merge_key = text, merge_key
+
+    def apply(self, doc: Document) -> None:
+        layer = doc.layer(self.layer_id)
+        if not hasattr(layer, self.name):
+            raise ValueError(f"A {layer.kind} layer has no '{self.name}'.")
+        setattr(layer, self.name, copy.deepcopy(self.new))
+
+    def revert(self, doc: Document) -> None:
+        setattr(doc.layer(self.layer_id), self.name, copy.deepcopy(self.old))
+
+    def merge(self, newer: Edit) -> bool:
+        if not (isinstance(newer, SetLayerField) and newer.layer_id == self.layer_id
+                and newer.name == self.name):
+            return False
+        self.new = copy.deepcopy(newer.new)
+        return True

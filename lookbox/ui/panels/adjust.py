@@ -139,6 +139,11 @@ class AdjustPanel(QWidget):
         if self.compare_btn.isChecked():
             self.compare_btn.setChecked(False)  # emits compare(None) for the old layer
         layer = self.editor.selected_layer()
+        if layer is not None and not isinstance(layer, ImageLayer):
+            self.hint.setText("Adjustments are for images.\nUse the Layer tab to style this fill.")
+            layer = None
+        else:
+            self.hint.setText("Select an image to adjust it.")
         self._layer_id = layer.id if layer is not None else None
         self.hint.setVisible(layer is None)
         self.scroll.setVisible(layer is not None)

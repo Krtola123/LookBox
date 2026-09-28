@@ -16,7 +16,7 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QFrame, QGraphicsRectItem, QGraphicsScene, QGraphicsView
 
 from lookbox.commands import edits
-from lookbox.core.model import ImageLayer, Transform
+from lookbox.core.model import Layer, Transform
 from lookbox.ui.canvas import handles as H
 from lookbox.ui.canvas import overlay
 from lookbox.ui.canvas.frame_stats import FrameStats
@@ -172,14 +172,11 @@ class CanvasView(QGraphicsView):
             overlay.selection(painter, t, *self._size(layer), self.zoom(), layer.locked)
 
     # ------------------------------------------------------------ helpers
-    def _layer(self, lid: str) -> ImageLayer | None:
+    def _layer(self, lid: str) -> Layer | None:
         doc = self.editor.doc
-        if not doc.has_layer(lid):
-            return None
-        layer = doc.layer(lid)
-        return layer if isinstance(layer, ImageLayer) else None
+        return doc.layer(lid) if doc.has_layer(lid) else None
 
-    def _size(self, layer: ImageLayer) -> tuple[int, int]:
+    def _size(self, layer: Layer) -> tuple[int, int]:
         return H.layer_size(self.editor.doc, layer)
 
     def _scene_pt(self, e) -> tuple[float, float]:

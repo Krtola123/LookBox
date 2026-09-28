@@ -71,12 +71,34 @@ def test_level_matrix_places_level_like_full_res():
 
 
 def test_display_bgra_order_and_premult_invariant():
-    p = premultiply(np.array([[[1.0, 0.5, 0.0, 0.5]]], np.float32))
-    q = levels.to_display_bgra(p)
-    assert q.tolist() == [[[0, 64, 128, 128]]]  # B, G, R, A — premultiplied
+    exact = np.array([[[1.0, 128 / 255, 0.0, 1.0]]], np.float32)  # on the 8-bit grid: no dither
+    assert levels.to_display_bgra(premultiply(exact), dither=False).tolist() == [[[0, 128, 255, 255]]]  # BGRA
     rnd = premultiply(make_rgba(50, 50, seed=3))
     q = levels.to_display_bgra(rnd)
     assert np.all(q[:, :, :3] <= q[:, :, 3:4])
+    assert np.array_equal(q, levels.to_display_bgra(rnd))  # deterministic
+
+
+def test_display_dither_removes_banding():
+    ramp = np.tile(np.linspace(0.10, 0.14, 1024, dtype=np.float32)[None, :, None], (64, 1, 4))
+    ramp[:, :, 3] = 1.0
+    q = levels.to_display_bgra(ramp).astype(np.float32) / 255.0
+    col = q[:, :, 2].mean(axis=0)  # red channel sits at index 2 (BGRA)
+    smooth = np.convolve(col, np.ones(31) / 31, mode="valid")
+    ideal = np.convolve(ramp[0, :, 0], np.ones(31) / 31, mode="valid")
+    assert np.abs(smooth - ideal).max() < 0.25 / 255  # tracks the ramp; no stair steps
+    plain = levels.to_display_bgra(ramp, dither=False).astype(np.float32) / 255.0
+    stairs = np.convolve(plain[:, :, 2].mean(axis=0), np.ones(31) / 31, mode="valid")
+    assert np.abs(stairs - ideal).max() > 0.3 / 255  # sanity: without dither it *does* band
+
+
+def test_needs_dither():
+    from lookbox.core.model import Adjustments, FillLayer, GradientFade, ImageLayer
+    assert not levels.needs_dither(ImageLayer(), 1.0)
+    assert levels.needs_dither(ImageLayer(), 0.5)
+    assert levels.needs_dither(ImageLayer(adjust=Adjustments(brightness=1)), 1.0)
+    assert levels.needs_dither(ImageLayer(fade=GradientFade()), 1.0)
+    assert levels.needs_dither(FillLayer(), 1.0)
 
 
 def test_lru_evicts_oldest_by_bytes():

@@ -136,3 +136,7 @@ QToolButton#compareButton:checked { background: #8b3dff; border-color: #8b3dff; 
 QCheckBox#invertToggle { background: transparent; spacing: 6px; }
 QPushButton#resetButton { background: transparent; border: 1px solid #3a3b40; }
 QPushButton#resetButton:disabled { color: #5b5c61; border-color: #2e2f33; }
+
+/* ---- Layer tab (M4) ---- */
+QToolButton#colourButton { border: 1px solid #4a4b52; border-radius: 6px; }
+QToolButton#colourButton:hover { border-color: #8b3dff; }

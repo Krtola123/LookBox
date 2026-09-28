@@ -12,7 +12,7 @@ from dataclasses import replace
 import numpy as np
 
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, ImageLayer, Transform
+from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, Transform
 from lookbox.core.render.pipeline import layer_source
 from lookbox.core.render.transform import canvas_to_local, corners
 
@@ -139,7 +139,9 @@ def drag_rotate(t0: Transform, press: tuple[float, float], cur: tuple[float, flo
     return replace(t0, rotation_deg=normalise_deg(deg))
 
 
-def layer_size(doc: Document, layer: ImageLayer) -> tuple[int, int]:
+def layer_size(doc: Document, layer: Layer) -> tuple[int, int]:
+    if isinstance(layer, FillLayer):
+        return layer.width, layer.height
     if layer.crop is not None:
         return layer.crop[2], layer.crop[3]
     info = doc.assets[layer.source]
@@ -154,12 +156,18 @@ def layer_at(doc: Document, store: AssetStore, x: float, y: float,
     block clicks on the layers under it.
     """
     for layer in reversed(doc.layers):
-        if not layer.visible or layer.locked or not isinstance(layer, ImageLayer):
+        if not layer.visible or layer.locked:
             continue
         w, h = layer_size(doc, layer)
         lx, ly = canvas_to_local(layer.transform, w, h, x, y)
         ix, iy = math.floor(lx), math.floor(ly)
-        if 0 <= ix < w and 0 <= iy < h:
+        if not (0 <= ix < w and 0 <= iy < h):
+            continue
+        if isinstance(layer, FillLayer):
+            # Backdrops are hit anywhere inside their box (like Canva's background), unless invisible.
+            if max(s.color[3] for s in layer.fill.stops) * layer.opacity >= alpha_threshold:
+                return layer.id
+        elif isinstance(layer, ImageLayer):
             if layer_source(layer, store)[iy, ix, 3] * layer.opacity >= alpha_threshold:
                 return layer.id
     return None

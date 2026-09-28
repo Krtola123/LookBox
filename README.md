@@ -28,7 +28,7 @@ pytest
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested.
 
-## Status: milestone M3
+## Status: milestone M4
 
 | Works | How |
 |---|---|
@@ -48,8 +48,12 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Never freezes | Import, open, save and export run in the background; export shows progress and can be cancelled |
 | Adjust | **Adjust** tab: Temperature, Tint, Brightness, Contrast, Highlights, Shadows, Whites, Blacks, Vibrance, Saturation, Color edit (swatches), Sharpness, Clarity, Vignette, Invert. Double-click a slider to reset it; one drag = one undo step |
 | Before / after | Toggle in the Adjust header shows the layer without its adjustments (view only) |
+| Backdrop | **Backdrop** button (Ctrl+B) adds a gradient behind everything. **Layer** tab: solid / linear / radial, two colours (with alpha), angle, centre, size, Fit to canvas |
+| Opacity & blend modes | **Layer** tab, any layer: Opacity, Blend mode (Normal, Multiply, Screen, Overlay, Add, Soft light) |
+| Gradient fade | **Layer** tab, any layer: fade to transparent, linear or radial, with direction, start, end, invert |
 
-**Tips:** judge Sharpness at 100% zoom (Ctrl+1): sharpening is too fine to show at fit-to-screen.
+**Tips:** blend modes preview against the checkerboard on a transparent canvas; add a backdrop
+(or pick a background colour) to see exactly what exports. Judge Sharpness at 100% zoom (Ctrl+1): sharpening is too fine to show at fit-to-screen.
 While you drag a slider the preview is half resolution; it sharpens when you let go.
 Tuning a control's look? Regenerate its golden file deliberately: `pytest --update-golden`.
 
