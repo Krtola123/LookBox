@@ -43,7 +43,7 @@ You can pass files: `python -m lookbox scene.lookbox` or `python -m lookbox a.pn
 pytest
 ```
 
-`tests/test_qt_ui.py` drives the real widgets offscreen (text typing, pick/lasso, zoom, the self-test); it runs
+`tests/test_qt_ui.py` drives the real widgets (text typing, pick/lasso, zoom, the self-test); it runs
 wherever PySide6 is installed, including every GitHub build, and is skipped elsewhere.
 
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested

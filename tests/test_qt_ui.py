@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 try:
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.name != "nt":  # Windows' offscreen platform has no real fonts; use real windows there
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QPoint, QPointF, Qt
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtWidgets import QApplication
@@ -63,6 +64,8 @@ def test_qt_text_engine_measures_and_draws():
     _app()
     with _QtEngine():
         layer = TextLayer(text="Hello\nLookBox", font_size=40, font_family="Arial")
+        eng = T.engine()
+        assert eng.advance(layer, "WWWW") > 1.5 * eng.advance(layer, "iiii"), "no real fonts (glyph boxes)"
         lay = T.layout(layer)
         assert len(lay.lines) == 2 and lay.width > 80 and lay.height > 80
         px = T.render_text(layer, lay.width, lay.height)

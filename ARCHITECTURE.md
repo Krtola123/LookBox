@@ -446,8 +446,8 @@ Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the 
 ## 15b. Packaging (M12)
 
 - `packaging/lookbox.spec` (PyInstaller, one folder, windowed, icon + version info; UPX off because packed DLLs trip antivirus). Data files: theme, icon, models.json. `collect_dynamic_libs("onnxruntime")` brings DirectML.dll. Unused Qt modules are excluded.
-- **Self-test:** `LookBox.exe --selftest [report.txt]` runs offscreen: builds the whole main window, loads bundled data, renders + exports a document with outlined text (real fonts), round-trips a project, runs a tiny ONNX model on the CPU and on DirectML if present. Exit code 0 = pass. This is what catches packaging bugs (missing DLL/plugin/data) that unit tests can't.
-- **CI:** `.github/workflows/windows-build.yml` on every push to main: pytest on Windows with real Qt (offscreen; includes `tests/test_qt_ui.py`), build, self-test the exe, upload `LookBox-windows.zip`. A `v*` tag also publishes a GitHub release.
+- **Self-test:** `LookBox.exe --selftest [report.txt]` builds the whole main window (minimized), loads bundled data, renders + exports a document with outlined text (real fonts), round-trips a project, runs a tiny ONNX model on the CPU and on DirectML if present. Exit code 0 = pass. This is what catches packaging bugs (missing DLL/plugin/data) that unit tests can't.
+- **CI:** `.github/workflows/windows-build.yml` on every push to main: pytest on Windows with real Qt (real windows, not the offscreen platform: on Windows it has no fonts, every glyph is a box; includes `tests/test_qt_ui.py`), build, self-test the exe, upload `LookBox-windows.zip`. A `v*` tag also publishes a GitHub release.
 - `build.bat` does the same on the user's PC.
 - A windowed exe has `sys.stdout/stderr = None`; `app._harden_frozen` points them at devnull so printing never crashes. `AppUserModelID` gives LookBox its own taskbar icon.
 - Not done (deliberately): an installer, file association for `.lookbox`, code signing (unsigned exe → SmartScreen "More info → Run anyway" the first time).

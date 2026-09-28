@@ -40,8 +40,10 @@ def _windows_taskbar_identity() -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     selftest = "--selftest" in argv
-    if selftest:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # no window, works on build machines
+    if selftest and sys.platform != "win32":
+        # No display needed. Not on Windows: Qt's offscreen platform there has no real fonts
+        # (every glyph is a 1-em box), which would hide exactly what the self-test checks.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     _harden_frozen()
     _windows_taskbar_identity()
 

@@ -1,4 +1,4 @@
-"""`LookBox.exe --selftest [report.txt]`: prove a build works, with no window shown.
+"""`LookBox.exe --selftest [report.txt]`: prove a build works (window minimized, closes itself).
 
 Packaging bugs don't show up in unit tests: a missing DLL, a data file left out of
 the bundle, a Qt plugin that didn't get copied. This runs the real app code the way
@@ -38,7 +38,7 @@ def _checks():
 
         app = QApplication.instance()
         win = MainWindow()
-        win.show()
+        win.showMinimized()  # a real window (real fonts, real platform), kept out of the way
         app.processEvents()
         win.add_text()  # the text panel, text engine and canvas together
         app.processEvents()
@@ -80,6 +80,12 @@ def _checks():
         text = TextLayer(text="LookBox", font_size=40, color=(1, 1, 1, 1), transform=Transform(x=200, y=140),
                          effects=Effects(outline=Outline(width=3, color=(0, 0, 0, 1))))
         edits.AddLayer(text).apply(doc)
+        from lookbox.core.render.text import engine
+
+        narrow = engine().advance(text, "iiii")
+        wide = engine().advance(text, "WWWW")
+        if not wide > 1.5 * narrow:  # a font with real glyphs, not placeholder boxes
+            raise AssertionError(f"no real fonts: 'iiii' = {narrow:.0f} px, 'WWWW' = {wide:.0f} px")
         out = render(doc, store)
         ink = out[115:165, 120:280]
         white = (ink[..., :3].min(axis=2) > 0.9).sum()
