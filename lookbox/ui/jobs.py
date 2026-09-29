@@ -49,7 +49,7 @@ class OpenJob(QThread):
 
     def run(self) -> None:
         try:
-            doc, store = serialize.load(self.path)
+            doc, store = serialize.load_project(self.path)
         except serialize.ProjectError as exc:
             self.done.emit(self.path, None, None, str(exc))
         except MemoryError:
@@ -63,9 +63,9 @@ class SaveJob(QThread):
 
     done = Signal(str, object, str)
 
-    def __init__(self, doc: Document, store: AssetStore, path: str, token, parent=None) -> None:
+    def __init__(self, doc, store: AssetStore, path: str, token, parent=None) -> None:
         super().__init__(parent)
-        self.doc = copy.deepcopy(doc)  # edits during the save can't leak into the file
+        self.doc = copy.deepcopy(doc)  # a page or the whole project; edits during the save can't leak in
         self.store, self.path, self.token = store, path, token
 
     def run(self) -> None:
@@ -78,15 +78,17 @@ class SaveJob(QThread):
 
 
 class ExportJob(QThread):
-    """Full-resolution float render → PNG. Cancellable; reports progress 0–100."""
+    """Full-resolution float render → PNG, one page or several (one file each).
+    Cancellable; reports progress 0–100 over all of them."""
 
     progress = Signal(int)
-    done = Signal(str, str)  # path, error ("" = success, "cancelled" = user cancelled)
+    done = Signal(str, str)  # last path, error ("" = success, "cancelled" = user cancelled)
 
     def __init__(self, doc: Document, store: AssetStore, path: str, bits: int = 8, scale: float = 1.0,
-                 parent=None) -> None:
+                 parent=None, more: list | None = None) -> None:
         super().__init__(parent)
-        self.doc = copy.deepcopy(doc)  # snapshot: edits during export can't affect it
+        # Snapshots: edits during export can't affect it. `more`: extra (page, path) pairs.
+        self.jobs = [(copy.deepcopy(doc), path)] + [(copy.deepcopy(d), p) for d, p in (more or [])]
         self.store = store  # immutable assets, thread-safe access
         self.path, self.bits, self.scale = path, bits, scale
         self.cancel_event = threading.Event()
@@ -95,13 +97,16 @@ class ExportJob(QThread):
         self.cancel_event.set()
 
     def run(self) -> None:
+        n = len(self.jobs)
         try:
-            px = render(self.doc, self.store, self.scale, self.cancel_event,
-                        progress=lambda f: self.progress.emit(int(f * 90)))
-            if self.cancel_event.is_set():
-                raise Cancelled()
-            save_png(self.path, px, self.bits)
-            self.progress.emit(100)
+            for i, (doc, path) in enumerate(self.jobs):
+                self.path = path
+                px = render(doc, self.store, self.scale, self.cancel_event,
+                            progress=lambda f, i=i: self.progress.emit(int((i + f * 0.9) * 100 / n)))
+                if self.cancel_event.is_set():
+                    raise Cancelled()
+                save_png(path, px, self.bits)
+                self.progress.emit(int((i + 1) * 100 / n))
         except Cancelled:
             self.done.emit(self.path, "cancelled")
         except MemoryError:

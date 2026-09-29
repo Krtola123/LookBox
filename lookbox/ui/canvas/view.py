@@ -7,7 +7,6 @@ through a single SetTransform edit (§4.2).
 
 from __future__ import annotations
 
-import time
 from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
@@ -18,7 +17,7 @@ from lookbox.commands import edits
 from lookbox.core.model import Layer, TextLayer, Transform
 from lookbox.ui.canvas import handles as H
 from lookbox.ui.canvas import overlay
-from lookbox.ui.canvas.frame_stats import FrameStats
+from lookbox.ui.canvas.drag_stats import DragStatsMixin
 from lookbox.ui.canvas.file_drop import FileDropMixin
 from lookbox.ui.canvas.layer_items import LayerItems
 from lookbox.ui.canvas.mask_brush import MaskBrush
@@ -36,7 +35,7 @@ class _Drag:
         self.current = t0
 
 
-class CanvasView(FileDropMixin, QGraphicsView):
+class CanvasView(DragStatsMixin, FileDropMixin, QGraphicsView):
     zoom_changed = Signal(float)
     edit_text = Signal(str)  # double-clicked a text layer: edit it (layer id)
     files_dropped = Signal(list, object)  # paths, (x, y) canvas point
@@ -70,11 +69,8 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self._level_timer.setInterval(80)
         self._level_timer.timeout.connect(self._refresh_levels)
         self.zoom_changed.connect(lambda _z: self._level_timer.start())
-        # Drag frame timing (M2 acceptance: >30 fps).
-        self._frames = FrameStats()
-        self._stats_timer = QTimer(self)
-        self._stats_timer.setInterval(500)
-        self._stats_timer.timeout.connect(self._emit_stats)
+        self._init_stats()  # drag frame timing (drag_stats.py)
+        self.pages = None  # the other pages around this one (pages.PageStrip, set by MainWindow)
 
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         # Zoom anchoring is done by hand in wheelEvent: Qt's AnchorUnderMouse relies on the base
@@ -96,6 +92,8 @@ class CanvasView(FileDropMixin, QGraphicsView):
     def _on_replaced(self) -> None:
         self._cancel_drag()
         self.layers.clear()
+        if self.editor.page_switch and self.pages is not None:  # same project: keep renders + view
+            return self.pages.switched()
         self.service.clear()
         self.sync()
         self.fit()
@@ -105,7 +103,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
         self._guides = []
         if d is not None:
             self.layers.end_preview(d.layer_id)
-            self._stats_timer.stop()
+            self._stats_stop(final=False)
 
     def _refresh_levels(self) -> None:
         self.layers.set_screen_scale(self.zoom() * self.devicePixelRatioF())
@@ -122,7 +120,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
             r, g, b, a = doc.background
             self._canvas_item.setBrush(QColor.fromRgbF(r, g, b, a))
         m = max(doc.canvas.w, doc.canvas.h)
-        self._scene.setSceneRect(canvas.adjusted(-m, -m, m, m))
+        self._scene.setSceneRect(self.pages.scene_rect() if self.pages else canvas.adjusted(-m, -m, m, m))
 
         self.layers.screen_scale = self.zoom() * self.devicePixelRatioF()
         self.layers.sync()
@@ -165,7 +163,10 @@ class CanvasView(FileDropMixin, QGraphicsView):
     # ------------------------------------------------------------ drawing
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
         doc = self.editor.doc
-        overlay.dim_outside(painter, rect, QRectF(0, 0, doc.canvas.w, doc.canvas.h))
+        overlay.dim_outside(painter, rect, *(self.pages.rects() if self.pages else [QRectF(0, 0, doc.canvas.w,
+                                                                                            doc.canvas.h)]))
+        if self.pages is not None:
+            self.pages.draw_labels(painter)
         if self._hover and self._hover != self.editor.selected and self._drag is None:
             hl = self._layer(self._hover)
             if hl is not None:
@@ -202,25 +203,11 @@ class CanvasView(FileDropMixin, QGraphicsView):
         d.current = t
         self.viewport().update()
 
-    # ------------------------------------------------------------ drag performance
     def _begin_drag(self, d: _Drag) -> None:
         self._drag = d
         self._targets = H.snap_targets(self.editor.doc, exclude=d.layer_id)  # fixed for this drag
         self._guides = []
-        self._frames.reset()
-        self._stats_timer.start()
-
-    def paintEvent(self, e) -> None:
-        t0 = time.perf_counter()
-        super().paintEvent(e)
-        if self._drag is not None:
-            now = time.perf_counter()
-            self._frames.add(now - t0, now)
-
-    def _emit_stats(self, final: bool = False) -> None:
-        text = self._frames.summary(final)
-        if text:
-            self.frame_stats.emit(text)
+        self._stats_start()
 
     # ------------------------------------------------------------ mouse
     def mousePressEvent(self, e) -> None:
@@ -250,6 +237,8 @@ class CanvasView(FileDropMixin, QGraphicsView):
                 self._begin_drag(_Drag("move", layer.id, None, (x, y), layer.transform, w, h))
                 return
         hit = H.layer_at(self.editor.doc, self.editor.store, x, y)
+        if hit is None and self.pages is not None and self.pages.activate_at(x, y):
+            return  # clicked another page: it's the one being edited now
         self.editor.select(hit)
         if hit is not None:
             hl = self._layer(hit)
@@ -325,8 +314,7 @@ class CanvasView(FileDropMixin, QGraphicsView):
         d, self._drag = self._drag, None
         self._guides = []
         if d is not None:
-            self._stats_timer.stop()
-            self._emit_stats(final=True)
+            self._stats_stop(final=True)
             if d.current != d.t0:
                 text = {"move": "Move", "scale": "Resize", "rotate": "Rotate"}[d.mode]
                 if d.mode == "scale" and isinstance(self._layer(d.layer_id), TextLayer):

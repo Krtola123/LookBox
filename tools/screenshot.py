@@ -66,6 +66,16 @@ def main(out: str) -> None:
     shot("style.png")
     win.tabs.setCurrentIndex(2)
     shot("layers.png")
+    # Pages: a square copy below, shown zoomed out.
+    win.duplicate_page()
+    from lookbox.commands import edits
+    from lookbox.core.model import Size
+    ed.push(edits.SetCanvas(ed.doc.canvas, Size(w=1080, h=1080)))
+    win.pages.relayout()
+    ed.set_active(ed.project.pages[0].id)
+    win.canvas.set_zoom(win.canvas.zoom() * 0.55)
+    pump(app, 2.5)
+    shot("pages.png")
     ed.stack.setClean()
     win.close()
     print("screenshots in", out)

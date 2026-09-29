@@ -1,4 +1,4 @@
-"""Small dialogs: New document."""
+"""Small dialogs: New design / Resize page, Export pages."""
 
 from __future__ import annotations
 
@@ -20,9 +20,11 @@ BACKGROUNDS = ["Transparent", "White", "Black", "Custom colour…"]
 
 
 class NewDocumentDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    """New design, or (with `resize=(w, h)`) Resize page: size only, starting from it."""
+
+    def __init__(self, parent: QWidget | None = None, resize: tuple[int, int] | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("New design")
+        self.setWindowTitle("Resize page" if resize else "New design")
         self._custom = QColor("#202124")
 
         self.preset = QComboBox()
@@ -55,9 +57,10 @@ class NewDocumentDialog(QDialog):
         form = QFormLayout(self)
         form.addRow("Size", self.preset)
         form.addRow("", size_row)
-        form.addRow("Background", bg_row)
+        if not resize:
+            form.addRow("Background", bg_row)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Create")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Resize" if resize else "Create")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -68,6 +71,9 @@ class NewDocumentDialog(QDialog):
         self.bg.currentIndexChanged.connect(lambda i: self.pick.setVisible(i == 3))
         self.pick.clicked.connect(self._pick)
         self._applying = False
+        if resize:
+            self.w.setValue(resize[0])
+            self.h.setValue(resize[1])
 
     def _on_preset(self, i: int) -> None:
         _, w, h = PRESETS[i]
@@ -92,3 +98,45 @@ class NewDocumentDialog(QDialog):
         if i == 3:
             bg = (self._custom.redF(), self._custom.greenF(), self._custom.blueF(), 1.0)
         return self.w.value(), self.h.value(), bg
+
+
+class ExportPagesDialog(QDialog):
+    """Which pages to export (projects with more than one page)."""
+
+    def __init__(self, pages: list[tuple[str, str]], active: int, parent: QWidget | None = None) -> None:
+        from PySide6.QtWidgets import QCheckBox, QLabel, QVBoxLayout
+
+        super().__init__(parent)
+        self.setWindowTitle("Export pages")
+        col = QVBoxLayout(self)
+        col.addWidget(QLabel("Export these pages (one PNG each):"))
+        self.boxes = []
+        for i, (label, _pid) in enumerate(pages):
+            b = QCheckBox(label)
+            b.setChecked(True)
+            col.addWidget(b)
+            self.boxes.append(b)
+        row = QHBoxLayout()
+        for text, fn in (("All", lambda: self._set(True)), ("None", lambda: self._set(False)),
+                         ("Only this page", lambda: self._only(active))):
+            btn = QPushButton(text)
+            btn.clicked.connect(fn)
+            row.addWidget(btn)
+        col.addLayout(row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Export…")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        col.addWidget(buttons)
+        self._ids = [pid for _, pid in pages]
+
+    def _set(self, on: bool) -> None:
+        for b in self.boxes:
+            b.setChecked(on)
+
+    def _only(self, i: int) -> None:
+        for j, b in enumerate(self.boxes):
+            b.setChecked(j == i)
+
+    def chosen(self) -> list[str]:
+        return [pid for pid, b in zip(self._ids, self.boxes) if b.isChecked()]

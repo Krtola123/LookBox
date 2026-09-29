@@ -66,6 +66,7 @@ class MaskBrush(QObject):
         # End the session cleanly when the context changes under it.
         self.editor.selection_changed.connect(self._on_selection)
         self.editor.document_replaced.connect(lambda: self.finish(apply=False))
+        self.editor.about_to_switch.connect(lambda: self.finish(apply=True))  # keep painting done on this page
         self.editor.changed.connect(self._on_changed)
 
     def _on_selection(self) -> None:

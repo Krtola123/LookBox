@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QSizePolicy, QTabWidget, QToolBar,
-                               QToolButton, QWidget)
+from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QMessageBox, QSizePolicy, QTabWidget, QToolBar,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from lookbox.commands import edits
-from lookbox.core.model import FillLayer, TextLayer, Transform
+from lookbox.core.model import Document, FillLayer, Size, TextLayer, Transform
 from lookbox.ui import icons
 from lookbox.ui.canvas.grade_preview import GradePreview
+from lookbox.ui.canvas.pages import PageStrip
+from lookbox.ui.dialogs import NewDocumentDialog
+from lookbox.ui.panels.pages_bar import PagesBar
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
@@ -34,6 +39,9 @@ class MainWindow(QMainWindow):
         self.canvas = CanvasView(self.editor, self.renderer)
         for policy in (self.canvas.setHorizontalScrollBarPolicy, self.canvas.setVerticalScrollBarPolicy):
             policy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # pan with Space/middle drag, like Canva
+        self.pages = PageStrip(self.canvas, self.editor)  # every page, stacked (M14)
+        self.canvas.pages = self.pages
+        self.pages.add_requested.connect(self.add_page)
         self.setCentralWidget(self.canvas)
         self._build_actions()
         self._build_top_bar()
@@ -99,6 +107,10 @@ class MainWindow(QMainWindow):
         self.act_100 = self._action("100%", lambda: self.canvas.set_zoom(1.0), "Ctrl+1", "Actual size (Ctrl+1)")
         self._action("Zoom in", lambda: self.canvas.set_zoom(self.canvas.zoom() * 1.25), ["Ctrl+=", "Ctrl++"])
         self._action("Zoom out", lambda: self.canvas.set_zoom(self.canvas.zoom() / 1.25), "Ctrl+-")
+        self._action("Copy layer", self.editor.copy_selected, "Ctrl+C")
+        self._action("Paste layer", self.editor.paste, "Ctrl+V")
+        self._action("Previous page", lambda: self._go_page(-1), "PgUp")
+        self._action("Next page", lambda: self._go_page(+1), "PgDown")
 
     def _build_top_bar(self) -> None:
         bar = QToolBar("Top bar")
@@ -170,7 +182,13 @@ class MainWindow(QMainWindow):
         self.layer_panel.interactive.connect(self.canvas.layers.set_interactive)
         self.layer_panel.interactive.connect(lambda _lid, on: self.grade_preview.suspend("slider", on))
         tabs.addTab(self.layer_panel, "Style")
-        tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
+        layers_tab = QWidget()
+        lt = QVBoxLayout(layers_tab)
+        lt.setContentsMargins(0, 0, 0, 0)
+        lt.setSpacing(0)
+        lt.addWidget(PagesBar(self.editor, self))
+        lt.addWidget(LayersPanel(self.editor, self.thumbs), 1)
+        tabs.addTab(layers_tab, "Layers")
         self.tabs = tabs
         self.editor.selection_changed.connect(self._follow_selection)
         self.canvas.edit_text.connect(self.edit_text)
@@ -241,6 +259,47 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.layer_panel)
         QTimer.singleShot(0, self.layer_panel.text.start_editing)  # once the tab is showing
 
+    # ------------------------------------------------------------ pages (M14)
+    def _go_page(self, step: int) -> None:
+        pages = self.editor.project.pages
+        i = self.editor.page_number() - 1 + step
+        if 0 <= i < len(pages):
+            self.editor.set_active(pages[i].id)
+
+    def add_page(self) -> None:
+        cur = self.editor.doc
+        page = Document(canvas=replace(cur.canvas), background=cur.background)
+        self.editor.push_pages(edits.AddPage(page, index=self.editor.page_number()))
+        self.editor.set_active(page.id)
+
+    def duplicate_page(self) -> None:
+        e = edits.duplicate_page(self.editor.project, self.editor.active)
+        self.editor.push_pages(e)
+        self.editor.set_active(e.page.id)
+
+    def move_page(self, step: int) -> None:
+        i = self.editor.page_number() - 1 + step
+        if 0 <= i < len(self.editor.project.pages):
+            self.editor.push_pages(edits.MovePage(self.editor.active, i))
+
+    def delete_page(self) -> None:
+        if len(self.editor.project.pages) <= 1:
+            return
+        doc = self.editor.doc
+        if doc.layers and QMessageBox.question(
+                self, "Delete page", f"Delete page {self.editor.page_number()} and its {len(doc.layers)} "
+                "layer(s)? (Undo brings it back.)") != QMessageBox.StandardButton.Yes:
+            return
+        self.editor.push_pages(edits.RemovePage(self.editor.active))
+
+    def resize_page(self) -> None:
+        c = self.editor.doc.canvas
+        dlg = NewDocumentDialog(self, resize=(c.w, c.h))
+        if dlg.exec():
+            w, h, _bg = dlg.result_values()
+            if (w, h) != (c.w, c.h):
+                self.editor.push(edits.SetCanvas(c, Size(w=w, h=h)))
+
     def duplicate_layer(self) -> None:
         layer = self.editor.selected_layer()
         if layer is None:
@@ -268,6 +327,7 @@ class MainWindow(QMainWindow):
         self.cutout.shutdown()
         self.canvas.brush.shutdown()
         self.grade_preview.shutdown()
+        self.pages.shutdown()
         self.docs.wait_all()  # an in-flight save must land before we exit
         self.renderer.shutdown()
         e.accept()

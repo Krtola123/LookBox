@@ -10,12 +10,18 @@ from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QProgressDi
 
 from lookbox.core import serialize
 from lookbox.core.io.images import SUPPORTED_EXTS
-from lookbox.ui.dialogs import NewDocumentDialog
+from lookbox.ui.dialogs import ExportPagesDialog, NewDocumentDialog
 from lookbox.ui.editor import Editor
 from lookbox.ui.jobs import ExportJob, ImportJob, OpenJob, SaveJob
 
 IMAGE_FILTER = "Images (" + " ".join(f"*{e}" for e in SUPPORTED_EXTS) + ")"
 PROJECT_FILTER = "RRIPP project (" + " ".join(f"*{e}" for e in serialize.OPEN_EXTENSIONS) + ")"
+
+
+def page_path(path: str, number: int) -> str:
+    """"shot.png", 2 → "shot_p2.png" (one file per page)."""
+    stem, ext = os.path.splitext(path)
+    return f"{stem}_p{number}{ext}"
 
 
 class DocumentActions(QObject):
@@ -139,7 +145,7 @@ class DocumentActions(QObject):
         if self.save_job is not None:
             self.status.emit("Still saving the previous version…", 3000)
             return False
-        self.save_job = SaveJob(self.editor.doc, self.editor.store, path, self.editor.save_token())
+        self.save_job = SaveJob(self.editor.project, self.editor.store, path, self.editor.save_token())
         self.save_job.done.connect(self._on_saved)
         self.status.emit(f"Saving {os.path.basename(path)}…", 0)
         self._start(self.save_job)
@@ -194,14 +200,27 @@ class DocumentActions(QObject):
     def export_png(self) -> None:
         if self.export_job is not None:
             return
+        project, pages = self.editor.project, [self.editor.doc]
+        if len(project.pages) > 1:
+            labels = [(f"Page {i}" + (f" · {p.name}" if p.name else "") + f"  ({p.canvas.w} × {p.canvas.h})", p.id)
+                      for i, p in enumerate(project.pages, 1)]
+            dlg = ExportPagesDialog(labels, self.editor.page_number() - 1, self.window)
+            if not dlg.exec():
+                return
+            pages = [project.page(pid) for pid in dlg.chosen()]
+            if not pages:
+                return
         base = os.path.splitext(os.path.basename(self.editor.path or "Untitled"))[0]
-        path, _ = QFileDialog.getSaveFileName(self.window, "Export PNG",
+        path, _ = QFileDialog.getSaveFileName(self.window, "Export PNG" if len(pages) == 1 else
+                                              f"Export {len(pages)} pages (numbered _p1, _p2…)",
                                               os.path.join(self.last_dir, base + ".png"), "PNG image (*.png)")
         if not path:
             return
         if not path.lower().endswith(".png"):
             path += ".png"
-        job = ExportJob(self.editor.doc, self.editor.store, path)
+        targets = [(pages[0], path)] if len(pages) == 1 else [
+            (p, page_path(path, project.page_index(p.id) + 1)) for p in pages]
+        job = ExportJob(targets[0][0], self.editor.store, targets[0][1], more=targets[1:])
         progress = QProgressDialog("Exporting…", "Cancel", 0, 100, self.window)
         progress.setWindowTitle("Export")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -216,6 +235,7 @@ class DocumentActions(QObject):
 
     @Slot(str, str)
     def _on_exported(self, path: str, error: str) -> None:
+        n = len(self.export_job.jobs) if self.export_job is not None else 1
         self._finish(self.export_job)
         self._export_progress.close()
         self._export_progress.deleteLater()
@@ -227,4 +247,4 @@ class DocumentActions(QObject):
             self._error("Export failed", error)
         else:
             self.last_dir = os.path.dirname(path)
-            self.status.emit(f"Exported {os.path.basename(path)}", 4000)
+            self.status.emit(f"Exported {os.path.basename(path)}" if n == 1 else f"Exported {n} pages", 4000)

@@ -1,10 +1,14 @@
-"""Editor state: the open document, its assets, undo history and selection.
+"""Editor state: the open project (pages), the page being edited, its assets, undo
+history, selection and the layer clipboard.
 
-The UI talks to this object; it never mutates the Document itself (§4.2).
+The UI talks to this object; it never mutates a Document itself (§4.2). `doc` is the
+active page, so everything that edits "the design" edits that page. One undo history
+covers all pages; undoing a change on another page shows that page.
 """
 
 from __future__ import annotations
 
+import copy
 import os
 
 from PySide6.QtCore import QObject, Signal
@@ -15,18 +19,24 @@ from lookbox.commands import edits
 from lookbox.commands.qt import EditCommand
 from lookbox.core import serialize
 from lookbox.core.assets import AssetStore
-from lookbox.core.model import Document, ImageLayer, Layer, LayerMask, Size, Transform
+from lookbox.core.model import Document, ImageLayer, Layer, LayerMask, Project, Size, Transform
 
 
 class Editor(QObject):
-    changed = Signal()  # document content changed (edit, undo, redo)
+    changed = Signal()  # content changed (edit, undo, redo), any page
     selection_changed = Signal()
-    document_replaced = Signal()  # new / open
+    document_replaced = Signal()  # new / open, and switching page (then page_switch is True)
     path_changed = Signal()
+    pages_changed = Signal()  # pages added, removed, moved or resized
+    about_to_switch = Signal()  # the user is switching page (finish what's open on this one)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.doc = Document()
+        self.project = Project()
+        self.active = self.project.pages[0].id
+        self.page_switch = False  # True while document_replaced is emitted for a page switch
+        self._last_index = 0  # where the active page was: if it's deleted, its neighbour takes over
+        self._clipboard: tuple | None = None  # (layer, assets) copied with Ctrl+C
         self.store = AssetStore()
         self.stack = QUndoStack(self)
         self.path: str | None = None
@@ -34,16 +44,70 @@ class Editor(QObject):
         self.generation = 0  # bumps whenever a different document is opened
         self.revision = 0  # bumps on every edit, undo and redo
 
+    @property
+    def doc(self) -> Document:
+        """The page being edited."""
+        return self.project.page(self.active)
+
     # ---- edits ----
     def push(self, edit: edits.Edit) -> None:
+        """An edit to the active page."""
         self.stack.push(EditCommand(self.doc, edit, self._after_change))
 
-    def _after_change(self) -> None:
+    def push_pages(self, edit: edits.Edit) -> None:
+        """An edit to the page list (add, delete, move)."""
+        self.stack.push(EditCommand(self.project, edit, self._after_change))
+
+    def _after_change(self, target=None) -> None:
         self.revision += 1
+        if target is self.project:
+            if not self.project.has_page(self.active):  # the active page was deleted (or un-added)
+                self._set_active(self.project.pages[min(self._last_index, len(self.project.pages) - 1)].id)
+            self.pages_changed.emit()
+        elif isinstance(target, Document) and target is not self.doc and any(p is target for p in self.project.pages):
+            self._set_active(target.id)  # undo/redo on another page: show it
         if self.selected is not None and not self.doc.has_layer(self.selected):
             self.selected = None
             self.selection_changed.emit()
+        self._last_index = self.project.page_index(self.active)
         self.changed.emit()
+
+    # ---- pages ----
+    def set_active(self, page_id: str) -> None:
+        """Edit another page (clicked on the canvas or in the pages bar)."""
+        if page_id != self.active and self.project.has_page(page_id):
+            self.about_to_switch.emit()
+            self._set_active(page_id)
+
+    def _set_active(self, page_id: str) -> None:
+        self.active, self.selected = page_id, None
+        self._last_index = self.project.page_index(page_id)
+        self.page_switch = True
+        try:
+            self.document_replaced.emit()
+        finally:
+            self.page_switch = False
+        self.selection_changed.emit()
+
+    def page_number(self, page_id: str | None = None) -> int:
+        return self.project.page_index(page_id or self.active) + 1
+
+    # ---- clipboard (copy a layer to another page, or the same one) ----
+    def copy_selected(self) -> bool:
+        layer = self.selected_layer()
+        if layer is None:
+            return False
+        self._clipboard = (copy.deepcopy(layer), edits.layer_assets(self.doc, layer), self.active)
+        return True
+
+    def paste(self) -> bool:
+        if self._clipboard is None:
+            return False
+        layer, assets, from_page = self._clipboard
+        edit = edits.paste_layer(self.doc, layer, assets, offset=20.0 if from_page == self.active else 0.0)
+        self.push(edit)
+        self.select(edit.layer.id)
+        return True
 
     # ---- selection (not part of undo, like Canva) ----
     def select(self, layer_id: str | None) -> None:
@@ -87,8 +151,9 @@ class Editor(QObject):
         return True
 
     # ---- documents ----
-    def _replace(self, doc: Document, store: AssetStore, path: str | None) -> None:
-        self.doc, self.store, self.path, self.selected = doc, store, path, None
+    def _replace(self, project: Project, store: AssetStore, path: str | None) -> None:
+        self.project, self.store, self.path, self.selected = project, store, path, None
+        self.active, self._last_index = project.pages[0].id, 0
         self.generation += 1
         self.stack.clear()
         self.stack.setClean()
@@ -97,15 +162,15 @@ class Editor(QObject):
         self.path_changed.emit()
 
     def new_document(self, w: int, h: int, background: tuple[float, float, float, float] | None) -> None:
-        self._replace(Document(canvas=Size(w=w, h=h), background=background), AssetStore(), None)
+        self._replace(Project(pages=[Document(canvas=Size(w=w, h=h), background=background)]), AssetStore(), None)
 
-    def adopt(self, doc: Document, store: AssetStore, path: str) -> None:
-        """Take over a document loaded off-thread (ui/jobs.OpenJob)."""
-        self._replace(doc, store, path)
+    def adopt(self, project: Project, store: AssetStore, path: str) -> None:
+        """Take over a project loaded off-thread (ui/jobs.OpenJob)."""
+        self._replace(project, store, path)
 
     def save(self, path: str) -> None:
         """Blocking save, for the 'save before closing?' prompt. Raises ProjectError / OSError."""
-        serialize.save(path, self.doc, self.store)
+        serialize.save(path, self.project, self.store)
         self.finish_save(path, self.save_token())
 
     def save_token(self) -> tuple[int, int]:

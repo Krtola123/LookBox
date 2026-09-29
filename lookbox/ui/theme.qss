@@ -183,3 +183,11 @@ QCheckBox::indicator {
 QCheckBox::indicator:hover { border-color: #8b3dff; }
 QCheckBox::indicator:checked { background: #8b3dff; border-color: #8b3dff; image: url({UI}/check.png); }
 QCheckBox::indicator:disabled { border-color: #3a3b40; background: #1f2023; }
+
+/* ---- Pages (M14) ---- */
+QWidget#pagesBar { background: #1c1d20; border-bottom: 1px solid #2a2b2f; }
+QToolButton#pageButton {
+    background: #2a2b30; border: 1px solid #3a3b40; border-radius: 7px; padding: 3px 8px; font-size: 11px;
+}
+QToolButton#pageButton:hover { background: #33343a; }
+QToolButton#pageButton:disabled { color: #5b5c61; border-color: #2e2f33; }

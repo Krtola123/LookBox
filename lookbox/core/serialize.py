@@ -2,8 +2,9 @@
 the same format and open as they are.
 
 A project file is a zip:
-  document.json          {"format_version": N, "document": {...}}
-  assets/<sha256><ext>   original imported file bytes, unmodified
+  document.json          {"format_version": 2, "project": {"pages": [{...}, ...]}}
+                         (version 1, before pages: {"format_version": 1, "document": {...}})
+  assets/<sha256><ext>   original imported file bytes, unmodified, once for all pages
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ import zipfile
 
 from lookbox.core.assets import AssetStore
 from lookbox.core.io.images import atomic_write
-from lookbox.core.model import Document, document_from_dict, document_to_dict
+from lookbox.core.model import Document, Project, project_from_dict, project_to_dict
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 EXTENSION = ".rripp"
 OPEN_EXTENSIONS = (".rripp", ".lookbox")  # .lookbox: the app's name before 1.1, same format
 
@@ -42,18 +43,27 @@ def migrate(data: dict) -> dict:
         raise ProjectError(
             f"This project was saved by a newer RRIPP (format {version}); update the app to open it."
         )
+    if version == 1:  # one design → a project with one page (M14)
+        data = {"format_version": 2, "project": {"pages": [data["document"]]}}
     return data
 
 
-def to_bytes(doc: Document, store: AssetStore) -> bytes:
-    used = doc.referenced_assets()
-    missing = [a for a in used if not store.has(a) or a not in doc.assets]
+def _as_project(doc_or_project) -> Project:
+    return doc_or_project if isinstance(doc_or_project, Project) else Project(pages=[doc_or_project])
+
+
+def to_bytes(doc_or_project, store: AssetStore) -> bytes:
+    project = _as_project(doc_or_project)
+    used = project.referenced_assets()
+    missing = [a for a in used if not store.has(a) or not any(a in p.assets for p in project.pages)]
     if missing:
         raise ProjectError(f"{len(missing)} image(s) used by this project are missing from memory.")
 
-    pruned = copy.copy(doc)
-    pruned.assets = {k: v for k, v in doc.assets.items() if k in used}
-    payload = {"format_version": FORMAT_VERSION, "document": document_to_dict(pruned)}
+    pruned = Project(pages=[copy.copy(p) for p in project.pages])
+    for page in pruned.pages:
+        mine = page.referenced_assets()
+        page.assets = {k: v for k, v in page.assets.items() if k in mine}
+    payload = {"format_version": FORMAT_VERSION, "project": project_to_dict(pruned)}
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -65,11 +75,17 @@ def to_bytes(doc: Document, store: AssetStore) -> bytes:
     return buf.getvalue()
 
 
-def save(path: str, doc: Document, store: AssetStore) -> None:
-    atomic_write(path, to_bytes(doc, store))
+def save(path: str, doc_or_project, store: AssetStore) -> None:
+    atomic_write(path, to_bytes(doc_or_project, store))
 
 
 def from_bytes(data: bytes) -> tuple[Document, AssetStore]:
+    """The first page (single-page callers and older code)."""
+    project, store = project_from_bytes(data)
+    return project.pages[0], store
+
+
+def project_from_bytes(data: bytes) -> tuple[Project, AssetStore]:
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -82,28 +98,40 @@ def from_bytes(data: bytes) -> tuple[Document, AssetStore]:
         except json.JSONDecodeError as exc:
             raise ProjectError("This project's document.json is corrupted.") from exc
         payload = migrate(payload)
-        doc = document_from_dict(payload["document"])
+        project = project_from_dict(payload["project"])
 
         store = AssetStore()
         names = set(zf.namelist())
-        for asset_id, info in doc.assets.items():
-            name = f"assets/{asset_id}{info.ext}"
-            if name not in names:
-                raise ProjectError(f"The image '{info.name or asset_id[:8]}' is missing from this project.")
-            stored = store.add_bytes(zf.read(name), info.ext, info.name)
-            if stored.id != asset_id:
-                raise ProjectError(f"The image '{info.name or asset_id[:8]}' in this project is corrupted.")
+        for page in project.pages:
+            for asset_id, info in page.assets.items():
+                if store.has(asset_id):
+                    continue  # shared by several pages: stored once
+                name = f"assets/{asset_id}{info.ext}"
+                if name not in names:
+                    raise ProjectError(f"The image '{info.name or asset_id[:8]}' is missing from this project.")
+                stored = store.add_bytes(zf.read(name), info.ext, info.name)
+                if stored.id != asset_id:
+                    raise ProjectError(f"The image '{info.name or asset_id[:8]}' in this project is corrupted.")
 
-    missing = doc.referenced_assets() - set(doc.assets)
-    if missing:
-        raise ProjectError(f"{len(missing)} layer image(s) are missing from this project.")
-    return doc, store
+    for page in project.pages:
+        missing = page.referenced_assets() - set(page.assets)
+        if missing:
+            raise ProjectError(f"{len(missing)} layer image(s) are missing from this project.")
+    return project, store
+
+
+def _read(path: str) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError as exc:
+        raise ProjectError(f"Could not open the project: {exc.strerror}.") from exc
 
 
 def load(path: str) -> tuple[Document, AssetStore]:
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read()
-    except OSError as exc:
-        raise ProjectError(f"Could not open the project: {exc.strerror}.") from exc
-    return from_bytes(data)
+    """The first page of a project (see load_project for all of them)."""
+    return from_bytes(_read(path))
+
+
+def load_project(path: str) -> tuple[Project, AssetStore]:
+    return project_from_bytes(_read(path))

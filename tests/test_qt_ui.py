@@ -305,3 +305,50 @@ def test_fill_and_grab_from_a_lasso(tmp_path):
             assert len(ed.doc.layers) == 1
         finally:
             _close(win)
+
+
+def test_pages_add_switch_undo_copy_paste_export(tmp_path):
+    _app()
+    with _QtEngine():
+        win = _window()
+        try:
+            from lookbox.core.io import images, render_sets
+            from lookbox.ui.documents import page_path
+
+            ed = win.editor
+            items, _, _ = render_sets.import_files(ed.store, [_render_set(tmp_path)])
+            ed.add_imported(ed.store, items, (80.0, 60.0))
+            first = ed.active
+            assert ed.copy_selected()
+            win.add_page()
+            second = ed.active
+            assert second != first and len(ed.project.pages) == 2 and ed.doc.layers == []
+            assert ed.paste() and len(ed.doc.layers) == 1  # copied across pages, image included
+            from lookbox.commands import edits
+            from lookbox.core.model import Size
+            ed.push(edits.SetCanvas(ed.doc.canvas, Size(w=1080, h=1080)))
+            QApplication.processEvents()
+            # Click page 1 on the canvas: it becomes the one being edited.
+            r1 = win.pages._scene_rects()[first]
+            assert win.pages.activate_at(r1.center().x(), r1.center().y()) and ed.active == first
+            # Undo the resize (on page 2): page 2 is shown again.
+            ed.stack.undo()
+            assert ed.active == second and ed.doc.canvas == Size(w=1920, h=1080)
+            # Other pages get their picture.
+            assert _wait(lambda: not win.pages.items[first].pix.pixmap().isNull())
+            # Export both pages, numbered.
+            from lookbox.ui.jobs import ExportJob
+            base = str(tmp_path / "out.png")
+            job = ExportJob(ed.project.pages[0], ed.store, page_path(base, 1),
+                            more=[(ed.project.pages[1], page_path(base, 2))])
+            job.run()
+            for n in (1, 2):
+                px = images.decode(open(page_path(base, n), "rb").read(), ".png")
+                assert px.shape[:2] == (1080, 1920)
+            # Delete a page, undo brings it back; never zero pages.
+            ed.push_pages(edits.RemovePage(ed.active))
+            assert len(ed.project.pages) == 1
+            ed.stack.undo()
+            assert len(ed.project.pages) == 2
+        finally:
+            _close(win)

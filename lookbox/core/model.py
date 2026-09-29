@@ -269,6 +269,10 @@ class TextLayer(Layer):
 
 @dataclass(kw_only=True)
 class Document:
+    """One page (§5a): a canvas with its layers. A Project holds one or more."""
+
+    id: str = field(default_factory=new_id)
+    name: str = ""  # shown above the page ("" = "Page N")
     canvas: Size = field(default_factory=lambda: Size(w=1920, h=1080))
     background: tuple[float, float, float, float] | None = None  # None = transparent
     layers: list[Layer] = field(default_factory=list)  # index 0 = bottom
@@ -401,8 +405,45 @@ def adjustments_from_dict(data: dict) -> Adjustments:
     return Adjustments(**a)
 
 
+@dataclass(kw_only=True)
+class Project:
+    """What a project file holds (§5a, M14): pages, top to bottom. Pages share one
+    AssetStore, so duplicating a page never copies pixels."""
+
+    pages: list[Document] = field(default_factory=lambda: [Document()])
+
+    def page_index(self, page_id: str) -> int:
+        for i, p in enumerate(self.pages):
+            if p.id == page_id:
+                return i
+        raise KeyError(f"No page with id {page_id}")
+
+    def page(self, page_id: str) -> Document:
+        return self.pages[self.page_index(page_id)]
+
+    def has_page(self, page_id: str) -> bool:
+        return any(p.id == page_id for p in self.pages)
+
+    def referenced_assets(self) -> set[str]:
+        out: set[str] = set()
+        for p in self.pages:
+            out |= p.referenced_assets()
+        return out
+
+
+def project_to_dict(project: Project) -> dict:
+    return {"pages": [document_to_dict(p) for p in project.pages]}
+
+
+def project_from_dict(data: dict) -> Project:
+    pages = [document_from_dict(p) for p in data.get("pages", [])]
+    return Project(pages=pages or [Document()])
+
+
 def document_to_dict(doc: Document) -> dict:
     return {
+        "id": doc.id,
+        "name": doc.name,
         "canvas": _plain(doc.canvas),
         "background": _plain(doc.background),
         "layers": [layer_to_dict(layer) for layer in doc.layers],
@@ -414,7 +455,9 @@ def document_to_dict(doc: Document) -> dict:
 
 def document_from_dict(data: dict) -> Document:
     bg = data.get("background")
+    extra = {k: data[k] for k in ("id", "name") if k in data}  # pages from before M14 get a new id
     return Document(
+        **extra,
         canvas=Size(**_known(Size, data["canvas"])),
         background=tuple(float(v) for v in bg) if bg is not None else None,
         layers=[layer_from_dict(d) for d in data.get("layers", [])],

@@ -7,7 +7,7 @@ from typing import Callable
 from PySide6.QtGui import QUndoCommand
 
 from lookbox.commands.edits import Edit
-from lookbox.core.model import Document
+from lookbox.core.model import Document, Project
 
 _merge_ids: dict[str, int] = {}
 
@@ -19,21 +19,23 @@ def _merge_id(key: str | None) -> int:
 
 
 class EditCommand(QUndoCommand):
-    """Wraps an Edit. `on_change` runs after every redo/undo so the UI can resync."""
+    """Wraps an Edit and what it applies to: a page (Document) or, for page-list edits,
+    the Project. `on_change(target)` runs after every redo/undo so the UI can resync
+    (and show the page that changed)."""
 
-    def __init__(self, doc: Document, edit: Edit, on_change: Callable[[], None]) -> None:
+    def __init__(self, target: Document | Project, edit: Edit, on_change: Callable[[object], None]) -> None:
         super().__init__(edit.text)
-        self.doc = doc
+        self.target = target
         self.edit = edit
         self.on_change = on_change
 
     def redo(self) -> None:  # also called once by QUndoStack.push
-        self.edit.apply(self.doc)
-        self.on_change()
+        self.edit.apply(self.target)
+        self.on_change(self.target)
 
     def undo(self) -> None:
-        self.edit.revert(self.doc)
-        self.on_change()
+        self.edit.revert(self.target)
+        self.on_change(self.target)
 
     def id(self) -> int:
         return _merge_id(self.edit.merge_key)

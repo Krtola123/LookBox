@@ -28,11 +28,13 @@ def checker() -> QPixmap:
     return pm
 
 
-def dim_outside(painter: QPainter, visible: QRectF, canvas: QRectF) -> None:
+def dim_outside(painter: QPainter, visible: QRectF, *pages: QRectF) -> None:
+    """Darken everything that isn't a page (the pasteboard)."""
     outside = QPainterPath()
     outside.addRect(visible)
     inside = QPainterPath()
-    inside.addRect(canvas)
+    for r in pages:
+        inside.addRect(r)
     painter.fillPath(outside.subtracted(inside), OUTSIDE_DIM)
 
 

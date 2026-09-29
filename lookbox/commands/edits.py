@@ -307,3 +307,6 @@ from lookbox.commands.text_edits import SetText, change_text, resize_text  # noq
 # Mask / render-pass edits likewise (M6, M8).
 from lookbox.commands.mask_edits import (  # noqa: E402,F401
     SetMask, SetPass, extract_session, extract_to_layer, fill_layer, grab, remove_background)
+# Pages (M14).
+from lookbox.commands.page_edits import (  # noqa: E402,F401
+    AddPage, MovePage, RemovePage, SetCanvas, SetPageName, duplicate_page, layer_assets, paste_layer)
