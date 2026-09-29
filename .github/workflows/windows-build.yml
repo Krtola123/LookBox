@@ -41,6 +41,21 @@ jobs:
           }
           exit $code
 
+      # Screenshots of the real UI → the `screens` branch (for reviewing UI changes remotely).
+      - name: Screenshots
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          python tools/screenshot.py "$env:RUNNER_TEMP\screens"
+          cd "$env:RUNNER_TEMP\screens"
+          git init -q
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -q -b screens
+          git add -A
+          git commit -q -m "UI screenshots for ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" screens
+
       - name: Build RRIPP.exe
         run: |
           python packaging/make_version_info.py
