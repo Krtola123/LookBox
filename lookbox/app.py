@@ -1,4 +1,4 @@
-"""Entry point: `python -m lookbox [file ...]`, or LookBox.exe.
+"""Entry point: `python -m lookbox [file ...]`, or RRIPP.exe.
 
 `--selftest [report.txt]` checks a build without showing a window (lookbox/selftest.py).
 """
@@ -9,6 +9,7 @@ import os
 import sys
 
 import lookbox  # noqa: F401  (EXR env var before cv2)
+from lookbox import branding
 
 
 def resource(name: str) -> str:
@@ -32,7 +33,7 @@ def _windows_taskbar_identity() -> None:
         try:
             import ctypes
 
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LookBox.LookBox")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(branding.APP_USER_MODEL_ID)
         except (AttributeError, OSError):
             pass
 
@@ -56,8 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     from lookbox.ui.text_engine import QtTextEngine
 
     app = QApplication(argv)
-    app.setApplicationName("LookBox")
-    app.setOrganizationName("LookBox")
+    app.setApplicationName(branding.APP_NAME)
+    app.setApplicationDisplayName(branding.APP_NAME)
+    app.setOrganizationName(branding.APP_NAME)
     app.setApplicationVersion(lookbox.__version__)
     app.setWindowIcon(QIcon(resource("icon.png")))
     app.setStyle("Fusion")
@@ -80,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     win.show()
 
     files = [a for a in argv[1:] if os.path.isfile(a)]
-    projects = [f for f in files if f.lower().endswith(serialize.EXTENSION)]
+    projects = [f for f in files if serialize.is_project(f)]
     if projects:
         win.open_path(projects[0])
     elif files:

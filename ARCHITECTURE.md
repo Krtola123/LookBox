@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — LookBox (working name)
+# ARCHITECTURE.md — RRIPP (Reshi Renders' Image Post Processing App; formerly LookBox)
 
 A personal, offline, Canva-simple image compositor for finishing 3D renders (Marmoset Toolbag) and occasional photos.
 This document is the source of truth. Any AI assistant working on this codebase must read it first and follow it.
@@ -125,7 +125,7 @@ Layer.fade: GradientFade | None     # kind linear|radial, angle_deg, start/end (
 
 **Assets** are stored once and referenced by hash. Duplicating a layer never copies pixels.
 
-**Project file:** `.lookbox` = a zip containing `document.json` + `assets/<sha256>.png|exr`. Include `"format_version": 1` and write a migration function whenever the schema changes.
+**Project file:** `.rripp` = a zip containing `document.json` + `assets/<sha256>.png|exr`. Include `"format_version": 1` and write a migration function whenever the schema changes.
 
 ---
 
@@ -294,7 +294,7 @@ As built (M6, `ai/runtime.py`): a `ModelManager` keeps **at most one** model loa
 Model sources, filenames, sizes and sha256 values live in `lookbox/models/models.json`, **not in code** (M6 values taken from the Git LFS pointers). At build time, verify that the ONNX exports exist and work on DirectML before committing to one. Export from PyTorch yourself if necessary (a dev-only script in `tools/`).
 
 ### 10.3 Delivery
-- Models download on first use into `%LOCALAPPDATA%\LookBox\models\` (override: `LOOKBOX_MODELS_DIR`), streamed and verified by size + sha256, with a progress dialog and a cancel button. Only a verified file takes the final name; failures leave nothing behind. A `.verified` marker avoids re-hashing ~1 GB each launch.
+- Models download on first use into `%LOCALAPPDATA%\RRIPP\models\` (override: `LOOKBOX_MODELS_DIR`), streamed and verified by size + sha256, with a progress dialog and a cancel button. Only a verified file takes the final name; failures leave nothing behind. A `.verified` marker avoids re-hashing ~1 GB each launch.
 - Runtime dependency: `onnxruntime-directml` on Windows (`onnxruntime` elsewhere). `run.bat` reinstalls requirements whenever requirements.txt changes.
 - The app works fully without any model downloaded. AI buttons show "Download model (xx MB)".
 
@@ -427,7 +427,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 
 | # | Milestone | Done when |
 |---|---|---|
-| M1 | Skeleton: window, canvas, import image, ImageLayer, move/scale/rotate handles, layers list, undo/redo, save/load `.lookbox`, PNG export | Import 3 images, arrange them, undo 20 steps, save, reopen, export; everything is identical |
+| M1 | Skeleton: window, canvas, import image, ImageLayer, move/scale/rotate handles, layers list, undo/redo, save/load `.rripp`, PNG export | Import 3 images, arrange them, undo 20 steps, save, reopen, export; everything is identical |
 | M2 | Render pipeline + preview levels + workers + cache | Dragging a layer on a 6000×4000 canvas stays smooth: the status bar readout shows ≤33 ms/frame ("OK") on the Ryzen 3600 |
 | M3 | Adjust panel (§7) + golden tests | All 15 controls work, previews match exports, golden tests pass |
 | M4 | Fill layers (solid/gradient), gradient fade, blend modes | A backdrop gradient with no visible banding after 8-bit export |
@@ -438,7 +438,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |
-| M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed (done: GitHub Actions `windows-latest` builds it and runs `LookBox.exe --selftest`, see §15b) |
+| M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed (done: GitHub Actions `windows-latest` builds it and runs `RRIPP.exe --selftest`, see §15b) |
 
 Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the end.
 
@@ -447,15 +447,15 @@ Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the 
 ## 15b. Packaging (M12)
 
 - `packaging/lookbox.spec` (PyInstaller, one folder, windowed, icon + version info; UPX off because packed DLLs trip antivirus). Data files: theme, icon, models.json. `collect_dynamic_libs("onnxruntime")` brings DirectML.dll. Unused Qt modules are excluded.
-- **Self-test:** `LookBox.exe --selftest [report.txt]` builds the whole main window (minimized), loads bundled data, renders + exports a document with outlined text (real fonts), round-trips a project, runs a tiny ONNX model on the CPU and on DirectML if present. Exit code 0 = pass. This is what catches packaging bugs (missing DLL/plugin/data) that unit tests can't.
-- **CI:** `.github/workflows/windows-build.yml` on every push to main: pytest on Windows with real Qt (real windows, not the offscreen platform: on Windows it has no fonts, every glyph is a box; includes `tests/test_qt_ui.py`), build, self-test the exe, upload `LookBox-windows.zip`. A version (`lookbox.__version__`) that has no release yet is published as release `v<version>`: releasing = bumping the version.
+- **Self-test:** `RRIPP.exe --selftest [report.txt]` builds the whole main window (minimized), loads bundled data, renders + exports a document with outlined text (real fonts), round-trips a project, runs a tiny ONNX model on the CPU and on DirectML if present. Exit code 0 = pass. This is what catches packaging bugs (missing DLL/plugin/data) that unit tests can't.
+- **CI:** `.github/workflows/windows-build.yml` on every push to main: pytest on Windows with real Qt (real windows, not the offscreen platform: on Windows it has no fonts, every glyph is a box; includes `tests/test_qt_ui.py`), build, self-test the exe, upload `RRIPP-windows.zip`. A version (`lookbox.__version__`) that has no release yet is published as release `v<version>`: releasing = bumping the version.
 - `build.bat` does the same on the user's PC.
-- A windowed exe has `sys.stdout/stderr = None`; `app._harden_frozen` points them at devnull so printing never crashes. `AppUserModelID` gives LookBox its own taskbar icon.
-- Not done (deliberately): an installer, file association for `.lookbox`, code signing (unsigned exe → SmartScreen "More info → Run anyway" the first time).
+- A windowed exe has `sys.stdout/stderr = None`; `app._harden_frozen` points them at devnull so printing never crashes. `AppUserModelID` gives RRIPP its own taskbar icon.
+- Not done (deliberately): an installer, file association for `.rripp`, code signing (unsigned exe → SmartScreen "More info → Run anyway" the first time).
 
 ## 15a. Error reporting (added after M6)
 
-`lookbox/crash.py`: Python errors anywhere (UI slots, worker threads) are appended with their traceback to `%LOCALAPPDATA%\LookBox\logs\lookbox.log` and, on the UI thread, shown in a dialog instead of closing the app (repeats within 5 s aren't re-shown). Native crashes write their stack via `faulthandler` to the same file.
+`lookbox/crash.py`: Python errors anywhere (UI slots, worker threads) are appended with their traceback to `%LOCALAPPDATA%\RRIPP\logs\rripp.log` and, on the UI thread, shown in a dialog instead of closing the app (repeats within 5 s aren't re-shown). Native crashes write their stack via `faulthandler` to the same file.
 
 ## 16. Rules for the AI assistant
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 
-from PySide6.QtCore import QObject, QSettings, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QProgressDialog
 
 from lookbox.ai.registry import ModelSpec, is_ready, load_registry
@@ -15,6 +15,7 @@ from lookbox.core.io.images import ImageError
 from lookbox.core.model import ImageLayer, LayerMask
 from lookbox.ui.ai_jobs import DownloadJob, RemoveBackgroundJob
 from lookbox.ui.editor import Editor
+from lookbox.ui.settings import app_settings
 
 SETTING_MODEL = "ai/background_model"
 SETTING_KEEP_BG = "ai/keep_background"
@@ -28,7 +29,7 @@ class CutoutController(QObject):
         super().__init__(window)
         self.window, self.editor = window, editor
         self.manager = ModelManager()
-        self.settings = QSettings("LookBox", "LookBox")
+        self.settings = app_settings()
         self.registry = {k: v for k, v in load_registry().items() if v.task == "background"}
         self._job = None
         self._progress: QProgressDialog | None = None
@@ -77,7 +78,7 @@ class CutoutController(QObject):
             return
         if importlib.util.find_spec("onnxruntime") is None:
             QMessageBox.warning(self.window, "Background removal",
-                                "The AI runtime isn't installed. Close LookBox and start it again with run.bat "
+                                "The AI runtime isn't installed. Close RRIPP and start it again with run.bat "
                                 "(it installs onnxruntime-directml automatically).")
             return
         spec = self.current_spec() or self.choose_model()

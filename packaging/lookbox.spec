@@ -1,6 +1,6 @@
-# PyInstaller build for LookBox (ARCHITECTURE §15, M12): one folder, windowed.
-#   pyinstaller packaging/lookbox.spec --noconfirm      → dist/LookBox/LookBox.exe
-# The build is checked by running `dist/LookBox/LookBox.exe --selftest report.txt`.
+# PyInstaller build for RRIPP (ARCHITECTURE §15, M12): one folder, windowed.
+#   pyinstaller packaging/lookbox.spec --noconfirm      → dist/RRIPP/RRIPP.exe
+# The build is checked by running `dist/RRIPP/RRIPP.exe --selftest report.txt`.
 
 import os
 
@@ -45,10 +45,10 @@ exe = EXE(  # noqa: F821
     a.scripts,
     [],
     exclude_binaries=True,
-    name="LookBox",
+    name="RRIPP",
     icon=os.path.join(ROOT, "lookbox", "ui", "icon.ico"),
-    console=False,  # a windowed app; errors go to %LOCALAPPDATA%\LookBox\logs\lookbox.log
+    console=False,  # a windowed app; errors go to %LOCALAPPDATA%\RRIPP\logs\rripp.log
     upx=False,  # UPX-packed DLLs trip antivirus and save little
     version=os.path.join(SPECPATH, "version_info.txt"),  # noqa: F821
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="LookBox", upx=False)  # noqa: F821
+coll = COLLECT(exe, a.binaries, a.datas, name="RRIPP", upx=False)  # noqa: F821

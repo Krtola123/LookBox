@@ -1,6 +1,6 @@
 """Text layout and rasterising (ARCHITECTURE §5, §6.1 "text").
 
-Real fonts need a font engine, which for LookBox means Qt, and the render core
+Real fonts need a font engine, which for this app means Qt, and the render core
 must stay Qt-free. So the split is:
 
 - this module (Qt-free, tested): line breaking, alignment, line spacing, the box

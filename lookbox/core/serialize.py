@@ -1,6 +1,7 @@
-""".lookbox project files (ARCHITECTURE §5).
+""".rripp project files (ARCHITECTURE §5). Files from before the rename (.lookbox) are
+the same format and open as they are.
 
-A .lookbox file is a zip:
+A project file is a zip:
   document.json          {"format_version": N, "document": {...}}
   assets/<sha256><ext>   original imported file bytes, unmodified
 """
@@ -17,7 +18,12 @@ from lookbox.core.io.images import atomic_write
 from lookbox.core.model import Document, document_from_dict, document_to_dict
 
 FORMAT_VERSION = 1
-EXTENSION = ".lookbox"
+EXTENSION = ".rripp"
+OPEN_EXTENSIONS = (".rripp", ".lookbox")  # .lookbox: the app's name before 1.1, same format
+
+
+def is_project(path: str) -> bool:
+    return path.lower().endswith(OPEN_EXTENSIONS)
 
 
 class ProjectError(Exception):
@@ -31,10 +37,10 @@ def migrate(data: dict) -> dict:
     """
     version = data.get("format_version")
     if not isinstance(version, int):
-        raise ProjectError("This file has no format version; it isn't a LookBox project.")
+        raise ProjectError("This file has no format version; it isn't an RRIPP project.")
     if version > FORMAT_VERSION:
         raise ProjectError(
-            f"This project was saved by a newer LookBox (format {version}); update the app to open it."
+            f"This project was saved by a newer RRIPP (format {version}); update the app to open it."
         )
     return data
 
@@ -67,7 +73,7 @@ def from_bytes(data: bytes) -> tuple[Document, AssetStore]:
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
-        raise ProjectError("This file isn't a valid LookBox project.") from exc
+        raise ProjectError("This file isn't a valid RRIPP project.") from exc
     with zf:
         try:
             payload = json.loads(zf.read("document.json"))

@@ -1,4 +1,4 @@
-"""`LookBox.exe --selftest [report.txt]`: prove a build works (window minimized, closes itself).
+"""`RRIPP.exe --selftest [report.txt]`: prove a build works (window minimized, closes itself).
 
 Packaging bugs don't show up in unit tests: a missing DLL, a data file left out of
 the bundle, a Qt plugin that didn't get copied. This runs the real app code the way
@@ -77,7 +77,7 @@ def _checks():
         img[..., 0], img[..., 3] = 0.8, 1.0
         info = store.add_bytes(images.encode_png(img), ".png", "red.png")
         edits.AddLayer(ImageLayer(source=info.id, transform=Transform(x=60, y=60)), asset=info).apply(doc)
-        text = TextLayer(text="LookBox", font_size=40, color=(1, 1, 1, 1), transform=Transform(x=200, y=140),
+        text = TextLayer(text="RRIPP", font_size=40, color=(1, 1, 1, 1), transform=Transform(x=200, y=140),
                          effects=Effects(outline=Outline(width=3, color=(0, 0, 0, 1))))
         edits.AddLayer(text).apply(doc)
         from lookbox.core.render.text import engine
@@ -135,7 +135,7 @@ def _checks():
 
 def run(report_path: str | None = None) -> int:
     """Run every check (the QApplication must exist). Returns the exit code."""
-    lines, failed = [f"LookBox self-test  {time.strftime('%Y-%m-%d %H:%M:%S')}  python {sys.version.split()[0]}"
+    lines, failed = [f"RRIPP self-test  {time.strftime('%Y-%m-%d %H:%M:%S')}  python {sys.version.split()[0]}"
                      f"  frozen={getattr(sys, 'frozen', False)}"], 0
     for name, check in _checks():
         t0 = time.perf_counter()

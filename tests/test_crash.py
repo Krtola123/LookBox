@@ -60,3 +60,33 @@ def test_install_hooks_threads(tmp_path):
             import faulthandler
             faulthandler.disable()
     _with_log_dir(tmp_path, run)
+
+
+def test_data_folder_moves_over_from_the_old_name(tmp_path):
+    import os
+    import sys
+
+    from lookbox import branding
+
+    env = "LOCALAPPDATA" if sys.platform == "win32" else "XDG_DATA_HOME"
+    old_env = os.environ.get(env)
+    os.environ[env] = str(tmp_path)
+    try:
+        (tmp_path / "LookBox" / "models").mkdir(parents=True)
+        (tmp_path / "LookBox" / "models" / "m.onnx").write_bytes(b"model")
+        root = branding.data_root()
+        assert root == str(tmp_path / "RRIPP") and (tmp_path / "RRIPP" / "models" / "m.onnx").exists()
+        assert not (tmp_path / "LookBox").exists()
+        assert branding.data_root() == root  # second time: nothing to do
+    finally:
+        if old_env is None:
+            del os.environ[env]
+        else:
+            os.environ[env] = old_env
+
+
+def test_old_project_files_still_open():
+    from lookbox.core import serialize
+
+    assert serialize.is_project("C:/x/a.RRIPP") and serialize.is_project("b.lookbox")
+    assert not serialize.is_project("c.png") and serialize.EXTENSION == ".rripp"

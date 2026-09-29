@@ -11,11 +11,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import threading
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable
+
+from lookbox.branding import data_root
 
 REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "models.json")
 CHUNK = 1 << 20
@@ -60,16 +61,12 @@ def load_registry(path: str = REGISTRY_PATH) -> dict[str, ModelSpec]:
 
 
 def models_dir() -> str:
-    """%LOCALAPPDATA%\\LookBox\\models on Windows; ~/.local/share/LookBox/models elsewhere.
+    """%LOCALAPPDATA%\\RRIPP\\models on Windows; ~/.local/share/RRIPP/models elsewhere.
     LOOKBOX_MODELS_DIR overrides (tests, portable installs)."""
     override = os.environ.get("LOOKBOX_MODELS_DIR")
     if override:
         return override
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
-    else:
-        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, "LookBox", "models")
+    return os.path.join(data_root(), "models")
 
 
 def model_path(spec: ModelSpec) -> str:

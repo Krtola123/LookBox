@@ -1,7 +1,7 @@
 """Crash reporting: every error ends up in a log file with its full traceback.
 
 - Python errors anywhere (UI slots, worker threads) are written to
-  <data dir>/LookBox/logs/lookbox.log and, when a UI is up, shown in a dialog
+  <data dir>/RRIPP/logs/rripp.log and, when a UI is up, shown in a dialog
   instead of taking the app down.
 - Hard native crashes (inside Qt / onnxruntime) can't be caught, but
   faulthandler writes their stack trace to the same log before the process dies.
@@ -20,6 +20,8 @@ import time
 import traceback
 from typing import Callable
 
+from lookbox.branding import APP_NAME, LOG_NAME, data_root
+
 MAX_LOG_BYTES = 2_000_000
 
 
@@ -27,15 +29,11 @@ def logs_dir() -> str:
     override = os.environ.get("LOOKBOX_LOG_DIR")
     if override:
         return override
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
-    else:
-        base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-    return os.path.join(base, "LookBox", "logs")
+    return os.path.join(data_root(), "logs")
 
 
 def log_path() -> str:
-    return os.path.join(logs_dir(), "lookbox.log")
+    return os.path.join(logs_dir(), LOG_NAME)
 
 
 def write_report(exc_type, exc, tb, where: str = "") -> str:
@@ -95,5 +93,5 @@ class ErrorReporter:
             return
         self._last[key] = now
         self.show("Something went wrong",
-                  f"{key}\n\nLookBox kept running. The full details were saved to:\n{log_path()}\n\n"
+                  f"{key}\n\n{APP_NAME} kept running. The full details were saved to:\n{log_path()}\n\n"
                   "Please send that file (or the last entry in it) so this can be fixed.")

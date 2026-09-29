@@ -15,7 +15,7 @@ from lookbox.ui.editor import Editor
 from lookbox.ui.jobs import ExportJob, ImportJob, OpenJob, SaveJob
 
 IMAGE_FILTER = "Images (" + " ".join(f"*{e}" for e in SUPPORTED_EXTS) + ")"
-PROJECT_FILTER = f"LookBox project (*{serialize.EXTENSION})"
+PROJECT_FILTER = "RRIPP project (" + " ".join(f"*{e}" for e in serialize.OPEN_EXTENSIONS) + ")"
 
 
 class DocumentActions(QObject):
@@ -117,7 +117,7 @@ class DocumentActions(QObject):
         path, _ = QFileDialog.getSaveFileName(self.window, "Save project", start, PROJECT_FILTER)
         if not path:
             return False
-        if not path.lower().endswith(serialize.EXTENSION):
+        if not serialize.is_project(path):
             path += serialize.EXTENSION
         return self._save_to(path, blocking)
 
@@ -183,7 +183,7 @@ class DocumentActions(QObject):
             self._error("Some images couldn't be imported", "\n".join(errors))
 
     def files_dropped(self, paths: list[str], at) -> None:
-        projects = [p for p in paths if p.lower().endswith(serialize.EXTENSION)]
+        projects = [p for p in paths if serialize.is_project(p)]
         if projects:
             if self.confirm_discard():
                 self.open_path(projects[0])

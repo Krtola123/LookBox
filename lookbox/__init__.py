@@ -1,4 +1,5 @@
-"""LookBox — an offline, Canva-simple compositor for finishing renders.
+"""RRIPP (Reshi Renders' Image Post Processing App): an offline, Canva-simple compositor
+for finishing renders. Formerly LookBox; the package keeps that name internally.
 
 See ARCHITECTURE.md for the rules this package follows.
 """

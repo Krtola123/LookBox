@@ -1,5 +1,5 @@
-# Windows build (ARCHITECTURE §15, M12): tests with real Qt, then LookBox.exe, then the
-# exe checks itself (--selftest) on a machine that never ran LookBox. The zip is attached
+# Windows build (ARCHITECTURE §15, M12): tests with real Qt, then RRIPP.exe, then the
+# exe checks itself (--selftest) on a machine that never ran the app. The zip is attached
 # to the run. A new lookbox.__version__ on main is published as a GitHub release
 # (tag v<version>), so releasing = bumping the version.
 name: Windows build
@@ -41,7 +41,7 @@ jobs:
           }
           exit $code
 
-      - name: Build LookBox.exe
+      - name: Build RRIPP.exe
         run: |
           python packaging/make_version_info.py
           python -m PyInstaller packaging/lookbox.spec --noconfirm --distpath dist --workpath build
@@ -50,24 +50,24 @@ jobs:
         shell: pwsh
         run: |
           $report = "$env:RUNNER_TEMP\selftest.txt"
-          $p = Start-Process -FilePath dist\LookBox\LookBox.exe -ArgumentList "--selftest", "`"$report`"" -Wait -PassThru
+          $p = Start-Process -FilePath dist\RRIPP\RRIPP.exe -ArgumentList "--selftest", "`"$report`"" -Wait -PassThru
           $text = if (Test-Path $report) { Get-Content $report } else { @("no report written") }
-          $log = "$env:LOCALAPPDATA\LookBox\logs\lookbox.log"
-          if (Test-Path $log) { $text += "---- lookbox.log"; $text += Get-Content $log -Tail 60 }
+          $log = "$env:LOCALAPPDATA\RRIPP\logs\rripp.log"
+          if (Test-Path $log) { $text += "---- rripp.log"; $text += Get-Content $log -Tail 60 }
           $text
           $level = if ($p.ExitCode -eq 0) { "notice" } else { "error" }
           Write-Host ("::$level title=selftest::" + ($text -join '%0A'))
-          "{0:N0} MB" -f ((Get-ChildItem dist\LookBox -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+          "{0:N0} MB" -f ((Get-ChildItem dist\RRIPP -Recurse | Measure-Object Length -Sum).Sum / 1MB)
           exit $p.ExitCode
 
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path dist\LookBox -DestinationPath LookBox-windows.zip
+        run: Compress-Archive -Path dist\RRIPP -DestinationPath RRIPP-windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LookBox-windows
-          path: LookBox-windows.zip
+          name: RRIPP-windows
+          path: RRIPP-windows.zip
           retention-days: 30
 
       - name: Release a new version
@@ -79,5 +79,5 @@ jobs:
           $v = python -c "import lookbox; print(lookbox.__version__)"
           gh release view "v$v" *> $null
           if ($LASTEXITCODE -eq 0) { Write-Host "v$v is already released"; exit 0 }
-          gh release create "v$v" LookBox-windows.zip --target $env:GITHUB_SHA --title "LookBox $v" `
-            --notes "Unzip anywhere and run LookBox.exe (keep it next to its _internal folder). Self-tested on Windows by the build."
+          gh release create "v$v" RRIPP-windows.zip --target $env:GITHUB_SHA --title "RRIPP $v" `
+            --notes "Unzip anywhere and run RRIPP.exe (keep it next to its _internal folder). Self-tested on Windows by the build."

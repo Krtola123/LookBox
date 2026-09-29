@@ -10,6 +10,7 @@ import os
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack
 
+from lookbox.branding import APP_NAME
 from lookbox.commands import edits
 from lookbox.commands.qt import EditCommand
 from lookbox.core import serialize
@@ -126,4 +127,4 @@ class Editor(QObject):
 
     def title(self) -> str:
         name = os.path.basename(self.path) if self.path else "Untitled"
-        return f"{name}{'*' if self.is_dirty() else ''} — LookBox"
+        return f"{name}{'*' if self.is_dirty() else ''} — {APP_NAME}"

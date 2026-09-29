@@ -1,4 +1,4 @@
-/* LookBox dark theme — single purple accent, 8 px grid (§12). */
+/* RRIPP dark theme — single purple accent, 8 px grid (§12). */
 
 QWidget {
     background: #18191b;
