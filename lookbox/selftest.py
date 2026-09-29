@@ -106,6 +106,27 @@ def _checks():
 
     yield "render + export", render_export
 
+    def filters():
+        from lookbox.core.assets import AssetStore
+        from lookbox.core.model import Document, FillLayer, LutRef, Size, Transform
+        from lookbox.core.render.pipeline import render
+        from lookbox.ui.panels.filters import library
+
+        looks = library()
+        if len(looks) < 6:
+            raise AssertionError(f"only {len(looks)} bundled looks found")
+        store = AssetStore()
+        doc = Document(canvas=Size(w=64, h=64), layers=[FillLayer(width=64, height=64, transform=Transform(x=32, y=32))])
+        plain = render(doc, store)
+        info = store.add_bytes(looks[0].data, ".cube", looks[0].name)
+        doc.global_lut = LutRef(asset=info.id, strength=1.0)
+        graded = render(doc, store)
+        if np.array_equal(graded, plain):
+            raise AssertionError("the whole-design filter changed nothing")
+        return f"{len(looks)} looks, whole-design grade renders"
+
+    yield "filters", filters
+
     def onnx():
         import onnxruntime as ort
 

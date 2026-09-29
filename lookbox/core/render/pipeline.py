@@ -26,9 +26,9 @@ from lookbox.core.model import Document, FillLayer, ImageLayer, Layer, TextLayer
 from dataclasses import dataclass
 
 from lookbox.core.masks import ops as mask_ops
-from lookbox.core.render import adjust, blend, effects, fill, text
+from lookbox.core.render import adjust, blend, effects, fill, lut, text
 from lookbox.core.render.adjust import Cancelled  # noqa: F401  (re-exported: one Cancelled for the pipeline)
-from lookbox.core.render.levels import export_level
+from lookbox.core.render.levels import choose_level, export_level, max_level, on_screen_scale
 from lookbox.core.render.transform import warp_to_canvas
 
 # Layer fields that only affect placement, never the pre-transform pixels.
@@ -141,6 +141,10 @@ def render_layer_full(layer: Layer, store: AssetStore, level: float = 1.0,
     if not layer.adjust.is_identity():
         rgb = adjust.apply(src[:, :, :3], src[:, :, 3], layer.adjust, level, cancel)
         src = np.concatenate([rgb, src[:, :, 3:4]], axis=2)
+    if layer.lut is not None and layer.lut.strength > 0:  # §7a filter, after adjust
+        _check(cancel)
+        rgb = lut.apply(src[:, :, :3], store.lut(layer.lut.asset), layer.lut.strength)
+        src = np.concatenate([rgb, src[:, :, 3:4]], axis=2)
     if layer.fade is not None:
         h, w = src.shape[:2]
         src = src if src.flags.writeable and src.base is None else src.copy()
@@ -154,12 +158,42 @@ def render_layer_full(layer: Layer, store: AssetStore, level: float = 1.0,
     return Rendered(premult, 0)
 
 
+def layer_box(layer: Layer, store: AssetStore) -> tuple[int, int]:
+    """The layer's own size in px at scale 1 (what its transform places)."""
+    if isinstance(layer, TextLayer):
+        return text.layer_box(layer)
+    if isinstance(layer, FillLayer):
+        return layer.width, layer.height
+    if layer.crop is not None:
+        return layer.crop[2], layer.crop[3]
+    h, w = store.pixels(layer.source).shape[:2]
+    return w, h
+
+
+def global_grade(doc: Document, store: AssetStore, straight: np.ndarray, level: float,
+                 cancel: threading.Event | None = None) -> np.ndarray:
+    """The whole-design grade (§6.1): global adjust, then global LUT, on the flattened
+    straight-alpha image. Returns a new array (or `straight` if there's nothing to do)."""
+    if not doc.has_global_grade():
+        return straight
+    rgb, alpha = straight[:, :, :3], straight[:, :, 3]
+    if not doc.global_adjust.is_identity():
+        rgb = adjust.apply(rgb, alpha, doc.global_adjust, level, cancel)
+    if doc.global_lut is not None and doc.global_lut.strength > 0:
+        _check(cancel)
+        rgb = lut.apply(rgb, store.lut(doc.global_lut.asset), doc.global_lut.strength)
+    return np.concatenate([np.clip(rgb, 0.0, 1.0), straight[:, :, 3:4]], axis=2)
+
+
 def render(doc: Document, store: AssetStore, scale: float = 1.0,
-           cancel: threading.Event | None = None, progress=None) -> np.ndarray:
+           cancel: threading.Event | None = None, progress=None, preview: bool = False) -> np.ndarray:
     """Flatten the document in float. Returns straight-alpha float32 RGBA, 0–1.
 
     Output size is the canvas × `scale` (rounded). `progress(fraction)` is
     called after each layer; setting `cancel` raises Cancelled.
+    `preview`: render each layer at the smallest level its on-screen size needs
+    (like the canvas does) instead of full resolution: for the whole-design grade
+    preview at screen size, where a full-resolution export per change is too slow.
     """
     out_w = max(1, round(doc.canvas.w * scale))
     out_h = max(1, round(doc.canvas.h * scale))
@@ -172,12 +206,15 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0,
     for i, layer in enumerate(doc.layers):
         _check(cancel)
         if layer.visible and layer.opacity > 0.0:
-            level = export_level(layer, scale)  # text renders sharp at the export size
+            if preview:
+                level = choose_level(on_screen_scale(layer.transform, scale), max_level(layer))
+            else:
+                level = export_level(layer, scale)  # text renders sharp at the export size
             rendered = render_layer_full(layer, store, level, cancel)
             src = rendered.pixels
             if layer.opacity < 1.0:
                 src = src * np.float32(layer.opacity)  # after effects: fades the shadow too
-            box = text.layer_box(layer) if isinstance(layer, TextLayer) else None
+            box = layer_box(layer, store) if level != 1.0 else None
             placed = warp_to_canvas(src, layer.transform, out_w, out_h, scale, pad=rendered.pad, box=box)
             if placed is not None:
                 patch, (x0, y0) = placed
@@ -186,4 +223,4 @@ def render(doc: Document, store: AssetStore, scale: float = 1.0,
         if progress is not None:
             progress((i + 1) / n)
 
-    return unpremultiply(acc)
+    return global_grade(doc, store, unpremultiply(acc), scale, cancel)

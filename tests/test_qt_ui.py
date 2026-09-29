@@ -214,3 +214,58 @@ def test_selftest_passes():
     with _QtEngine():
         assert selftest.run(None) == 0
 
+
+
+def _wait(cond, ms=8000):
+    import time
+
+    end = time.monotonic() + ms / 1000
+    while time.monotonic() < end:
+        QApplication.processEvents()
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_filters_on_a_layer_and_the_whole_design(tmp_path):
+    _app()
+    with _QtEngine():
+        win = _window()
+        try:
+            from lookbox.core.io import render_sets
+
+            ed = win.editor
+            items, _, _ = render_sets.import_files(ed.store, [_render_set(tmp_path)])
+            ed.add_imported(ed.store, items, (80.0, 60.0))
+            layer = ed.selected_layer()
+            panel = win.adjust_panel
+            win.tabs.setCurrentWidget(panel)
+            # A bundled look on the layer.
+            f = panel.filters
+            key = next(k for k in f.buttons if k is not None)
+            f.buttons[key].click()
+            assert ed.doc.layer(layer.id).lut is not None and ed.doc.layer(layer.id).lut.strength == 1.0
+            f.strength.set_value(40)
+            f._strength(40)
+            assert abs(ed.doc.layer(layer.id).lut.strength - 0.4) < 1e-6
+            # Whole design: its own filter + a slider; the canvas shows the graded composite.
+            panel.set_whole(True)
+            f.buttons[key].click()
+            assert ed.doc.global_lut is not None and ed.doc.layer(layer.id).lut.strength == 0.4
+            panel.rows["contrast"].slider.setValue(30)
+            panel._flush()
+            assert ed.doc.global_adjust.contrast == 30
+            assert _wait(lambda: win.grade_preview.item.isVisible())
+            assert win.canvas.layers.covered
+            # Dragging a layer shows the live layers; letting go brings the grade back.
+            win.grade_preview.suspend("drag", True)
+            assert not win.grade_preview.item.isVisible() and not win.canvas.layers.covered
+            win.grade_preview.suspend("drag", False)
+            assert _wait(lambda: win.grade_preview.item.isVisible())
+            # Undo everything whole-design: the overlay goes away.
+            while ed.doc.has_global_grade():
+                ed.stack.undo()
+            assert _wait(lambda: not win.grade_preview.item.isVisible()) and not win.canvas.layers.covered
+        finally:
+            _close(win)

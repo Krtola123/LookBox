@@ -7,7 +7,7 @@ Placement uses core.render.transform.level_matrix, the same math as export.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
@@ -75,6 +75,8 @@ class _Entry:
 
 
 class LayerItems(QObject):
+    live_changed = Signal(bool)  # a layer is being dragged (live transform) / not any more
+
     def __init__(self, scene: QGraphicsScene, service: RenderService, editor: Editor) -> None:
         super().__init__(scene)
         self.scene, self.service, self.editor = scene, service, editor
@@ -84,10 +86,13 @@ class LayerItems(QObject):
         self._interactive: set[str] = set()  # layers whose sliders are being dragged: half-res previews
         self._bypass: str | None = None  # layer shown "before" (adjustments off), view-only
         self._mask_bypass: str | None = None  # layer shown without its mask (mask brush), view-only
+        self.covered = False  # the whole-design grade preview is on top: layer items hidden
         service.ready.connect(self._on_ready)
 
     # ---- public ----
     def clear(self) -> None:
+        if self._live:
+            self.live_changed.emit(False)
         self._live.clear()
         self._interactive.clear()
         self._bypass = None
@@ -116,7 +121,7 @@ class LayerItems(QObject):
             e.w, e.h = layer_size(doc, layer)
             e.target_key = render_key(self._effective(layer))
             e.item.setZValue(z)
-            e.item.setVisible(layer.visible)
+            e.item.setVisible(layer.visible and not self.covered)
             e.item.setOpacity(layer.opacity)
             mode = _QT_MODES.get(layer.blend_mode, _QT_MODES["normal"])
             if e.item.mode != mode:
@@ -136,8 +141,18 @@ class LayerItems(QObject):
                 self._update_level(e, layer)
                 self._place(e, self._transform_of(layer))
 
+    def set_covered(self, on: bool) -> None:
+        """Hide the layer items under the whole-design grade preview (or show them again)."""
+        if on != self.covered:
+            self.covered = on
+            doc = self.editor.doc
+            for lid, e in self.entries.items():
+                e.item.setVisible(doc.has_layer(lid) and doc.layer(lid).visible and not on)
+
     def preview(self, layer_id: str, t: Transform) -> None:
         """Show a layer at `t` without touching the document (live drag)."""
+        if not self._live:
+            self.live_changed.emit(True)
         self._live[layer_id] = t
         e = self.entries.get(layer_id)
         if e is not None:
@@ -145,7 +160,8 @@ class LayerItems(QObject):
 
     def end_preview(self, layer_id: str) -> None:
         """Drop the live transform and show the document's again (release or cancel)."""
-        self._live.pop(layer_id, None)
+        if self._live.pop(layer_id, None) is not None and not self._live:
+            self.live_changed.emit(False)
         doc = self.editor.doc
         e = self.entries.get(layer_id)
         if e is not None and doc.has_layer(layer_id):

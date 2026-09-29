@@ -185,6 +185,15 @@ class LayerMask:
 
 
 @dataclass(kw_only=True)
+class LutRef:
+    """A LUT filter (§7a): the .cube file is an asset; strength 0–1 blends with the original."""
+
+    asset: str
+    strength: float = 1.0
+    name: str = ""  # shown in the panel (the file's title or name)
+
+
+@dataclass(kw_only=True)
 class AssetInfo:
     """Metadata for an asset. The bytes and decoded pixels are in AssetStore."""
 
@@ -208,6 +217,7 @@ class Layer:
     fade: GradientFade | None = None
     effects: Effects = field(default_factory=Effects)
     mask: LayerMask | None = None  # image layers only
+    lut: LutRef | None = None  # filter (§7a): after adjust, before fade
 
     kind = "base"  # class attribute, not a field
 
@@ -263,6 +273,13 @@ class Document:
     background: tuple[float, float, float, float] | None = None  # None = transparent
     layers: list[Layer] = field(default_factory=list)  # index 0 = bottom
     assets: dict[str, AssetInfo] = field(default_factory=dict)
+    # Whole-design grade (§6.1): applied to the flattened composite, adjust then LUT.
+    global_adjust: Adjustments = field(default_factory=Adjustments)
+    global_lut: LutRef | None = None
+
+    def has_global_grade(self) -> bool:
+        return not self.global_adjust.is_identity() or (self.global_lut is not None
+                                                          and self.global_lut.strength > 0)
 
     # ---- read-only helpers (mutation happens only in commands/) ----
     def layer_index(self, layer_id: str) -> int:
@@ -285,6 +302,10 @@ class Document:
                 ids.update(layer.passes.values())
             if layer.mask is not None:
                 ids.add(layer.mask.asset)
+            if layer.lut is not None:
+                ids.add(layer.lut.asset)
+        if self.global_lut is not None:
+            ids.add(self.global_lut.asset)
         return ids
 
 
@@ -323,7 +344,12 @@ def _layer_common(cls: type, data: dict) -> dict:
     d["effects"] = effects_from_dict(d.get("effects", {}))
     mask = d.get("mask")
     d["mask"] = LayerMask(**_known(LayerMask, mask)) if mask is not None else None
+    d["lut"] = lut_from_dict(d.get("lut"))
     return d
+
+
+def lut_from_dict(data: dict | None) -> LutRef | None:
+    return LutRef(**_known(LutRef, data)) if data is not None else None
 
 
 def _colour(v) -> tuple[float, float, float, float]:
@@ -381,6 +407,8 @@ def document_to_dict(doc: Document) -> dict:
         "background": _plain(doc.background),
         "layers": [layer_to_dict(layer) for layer in doc.layers],
         "assets": {k: _plain(v) for k, v in doc.assets.items()},
+        "global_adjust": _plain(doc.global_adjust),
+        "global_lut": _plain(doc.global_lut),
     }
 
 
@@ -394,4 +422,6 @@ def document_from_dict(data: dict) -> Document:
             k: AssetInfo(**_known(AssetInfo, v))
             for k, v in data.get("assets", {}).items()
         },
+        global_adjust=adjustments_from_dict(data.get("global_adjust", {})),
+        global_lut=lut_from_dict(data.get("global_lut")),
     )

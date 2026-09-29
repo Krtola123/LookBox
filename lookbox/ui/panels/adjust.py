@@ -1,9 +1,11 @@
-"""Adjust panel (ARCHITECTURE §7, §12) — Canva's layout: White balance, Light,
-Color, Color edit, Texture, Reset.
+"""Adjust panel (ARCHITECTURE §7, §12) — Canva's layout: Filters, Cut-out, White
+balance, Light, Color, Color edit, Texture, Reset.
 
-Every change goes through SetAdjustments. One slider drag = one undo step
-(merge key per drag). While a slider drags the canvas renders half-res; the
-full-res preview lands on release.
+Two targets (M10): **This layer** (an image) or **Whole design** (the global grade:
+adjust + filter on the flattened composite). Every change goes through
+SetAdjustments / SetLut with the layer id, or None for the whole design. One
+slider drag = one undo step (merge key per drag). While a slider drags the
+canvas renders half-res; the full-res preview lands on release.
 """
 
 from __future__ import annotations
@@ -16,9 +18,10 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButt
 
 from lookbox.commands import edits
 from lookbox.core.model import Adjustments, ColorBand, ImageLayer
-from lookbox.core.render.pipeline import layer_source
+from lookbox.core.render.pipeline import layer_source, render
 from lookbox.ui.editor import Editor
 from lookbox.ui.panels.color_edit import ColorEditSection, same_hue
+from lookbox.ui.panels.filters import FiltersSection
 from lookbox.ui.widgets.slider_row import SliderRow
 
 GROUPS = [
@@ -41,12 +44,15 @@ def _title(text: str) -> QLabel:
 class AdjustPanel(QWidget):
     interactive = Signal(str, bool)  # layer id, slider being dragged
     compare = Signal(object)  # layer id to show "before", or None
+    global_interactive = Signal(bool)  # a whole-design slider is being dragged
+    global_compare = Signal(bool)  # show the design without its whole-design grade
 
     def __init__(self, editor: Editor, cutout: QWidget | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = editor
         self.cutout = cutout  # the Cut-out section (M6), shown at the top of the body
         self._layer_id: str | None = None
+        self._whole = False  # editing the whole-design grade instead of a layer
         self._dragging = False
         self._drag_serial = 0
         self._pending: dict[str, int] = {}
@@ -62,6 +68,18 @@ class AdjustPanel(QWidget):
         header.setContentsMargins(16, 10, 12, 4)
         header.addWidget(_title("Adjust"))
         header.addStretch(1)
+        self.target_btns: dict[bool, QToolButton] = {}
+        for whole, label, tip in ((False, "This layer", "Adjust the selected image"),
+                                  (True, "Whole design", "Grade everything together: applied to the finished image")):
+            b = QToolButton()
+            b.setObjectName("targetButton")
+            b.setText(label)
+            b.setToolTip(tip)
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, w=whole: self.set_whole(w))
+            header.addWidget(b)
+            self.target_btns[whole] = b
+        header.addSpacing(6)
         self.compare_btn = QToolButton()
         self.compare_btn.setObjectName("compareButton")
         self.compare_btn.setText("Before / After")
@@ -84,6 +102,10 @@ class AdjustPanel(QWidget):
         col = QVBoxLayout(body)
         col.setContentsMargins(16, 4, 16, 16)
         col.setSpacing(6)
+        self.filters = FiltersSection(editor)
+        self.filters.pressed.connect(self._pressed)
+        self.filters.released.connect(self._released)
+        col.addWidget(self.filters)
         if cutout is not None:
             col.addWidget(cutout)
         self.rows: dict[str, SliderRow] = {}
@@ -137,33 +159,74 @@ class AdjustPanel(QWidget):
         layer = doc.layer(self._layer_id)
         return layer if isinstance(layer, ImageLayer) else None
 
+    def _target_adjust(self) -> Adjustments | None:
+        """The Adjustments being edited: the whole design's, or the layer's (None = nothing)."""
+        if self._whole:
+            return self.editor.doc.global_adjust
+        layer = self._layer()
+        return layer.adjust if layer is not None else None
+
+    def _target_id(self) -> str | None:
+        return None if self._whole else self._layer_id
+
+    def set_whole(self, whole: bool) -> None:
+        if whole != self._whole:
+            self._flush()
+            self.compare_btn.setChecked(False)  # ends a before/after for the old target first
+            self._whole = whole
+        self._on_selection()
+
+    def _composite_thumb(self):
+        """A small render of the whole design (for filter thumbnails and colour swatches)."""
+        rev = (self.editor.generation, self.editor.revision)
+        if getattr(self, "_thumb_rev", None) != rev:
+            doc = self.editor.doc
+            s = min(1.0, 256.0 / max(doc.canvas.w, doc.canvas.h))
+            self._thumb, self._thumb_rev = render(doc, self.editor.store, s, preview=True), rev
+        return self._thumb
+
     def _on_selection(self) -> None:
         self._flush()
         if self.compare_btn.isChecked():
-            self.compare_btn.setChecked(False)  # emits compare(None) for the old layer
+            self.compare_btn.setChecked(False)  # emits compare(None) / global_compare(False)
+        for whole, b in self.target_btns.items():
+            b.setChecked(whole == self._whole)
         layer = self.editor.selected_layer()
         if layer is not None and not isinstance(layer, ImageLayer):
-            self.hint.setText("Adjustments are for images.\nUse the Style tab to style this layer.")
+            self.hint.setText("Adjustments are for images.\nUse the Style tab to style this layer,\n"
+                              "or Whole design to grade everything.")
             layer = None
         else:
-            self.hint.setText("Select an image to adjust it.")
+            self.hint.setText("Select an image to adjust it,\nor choose Whole design to grade everything.")
         self._layer_id = layer.id if layer is not None else None
-        self.hint.setVisible(layer is None)
-        self.scroll.setVisible(layer is not None)
-        self.compare_btn.setEnabled(layer is not None)
-        if layer is not None:
-            self.color_edit.set_source(layer_source(layer, self.editor.store), layer.adjust.color_edit)
+        active = self._whole or layer is not None
+        self.hint.setVisible(not active)
+        self.scroll.setVisible(active)
+        self.compare_btn.setEnabled(active)
+        self.compare_btn.setToolTip("Show the design without its whole-design grade" if self._whole
+                                    else "Show this layer without adjustments")
+        if self._whole:
+            thumb = self._composite_thumb()
+            self.color_edit.set_source(thumb, self.editor.doc.global_adjust.color_edit)
+            self.filters.set_target(True, None, thumb)
+        elif layer is not None:
+            src = layer_source(layer, self.editor.store)
+            self.color_edit.set_source(src, layer.adjust.color_edit)
+            self.filters.set_target(True, layer.id, src)
+        else:
+            self.filters.set_target(False, None, None)
         if self.cutout is not None:
-            self.cutout.set_layer(self._layer_id)
+            self.cutout.setVisible(not self._whole)
+            self.cutout.set_layer(None if self._whole else self._layer_id)
         self.refresh()
 
     def refresh(self) -> None:
-        layer = self._layer()
-        if layer is None:
+        a = self._target_adjust()
+        if a is None:
             return
-        if self.cutout is not None:
+        self.filters.refresh()
+        if self.cutout is not None and not self._whole:
             self.cutout.refresh()
-        a = layer.adjust
         for key, row in self.rows.items():
             if not (self._dragging and key in self._pending):  # don't fight the hand on the slider
                 row.set_value(getattr(a, key))
@@ -179,13 +242,17 @@ class AdjustPanel(QWidget):
         self._flush()
         self._dragging = True
         self._drag_serial += 1
-        if self._layer_id:
+        if self._whole:
+            self.global_interactive.emit(True)
+        elif self._layer_id:
             self.interactive.emit(self._layer_id, True)
 
     def _released(self) -> None:
         self._flush()
         self._dragging = False
-        if self._layer_id:
+        if self._whole:
+            self.global_interactive.emit(False)
+        elif self._layer_id:
             self.interactive.emit(self._layer_id, False)
         self.refresh()
 
@@ -199,12 +266,12 @@ class AdjustPanel(QWidget):
 
     def _flush(self) -> None:
         self._flush_timer.stop()
-        layer = self._layer()
-        if layer is None or not (self._pending or self._pending_bands):
+        current = self._target_adjust()
+        if current is None or not (self._pending or self._pending_bands):
             self._pending.clear()
             self._pending_bands.clear()
             return
-        new = copy.deepcopy(layer.adjust)
+        new = copy.deepcopy(current)
         for key, v in self._pending.items():
             setattr(new, key, float(v))
         for (hue, field), v in self._pending_bands.items():
@@ -216,27 +283,31 @@ class AdjustPanel(QWidget):
         names = [LABELS[k] for k in self._pending] + (["Color edit"] if self._pending_bands else [])
         self._pending.clear()
         self._pending_bands.clear()
-        if new == layer.adjust:
+        if new == current:
             return
         # One drag = one undo step; outside a drag, repeated edits to one control merge too.
-        key = f"adj-drag-{self._drag_serial}" if self._dragging else f"adj-{layer.id}-{'+'.join(names)}"
-        self.editor.push(edits.SetAdjustments(layer.id, layer.adjust, new, text=f"Adjust {', '.join(names)}",
-                                              merge_key=key))
+        tid = self._target_id()
+        key = f"adj-drag-{self._drag_serial}" if self._dragging else f"adj-{tid or 'design'}-{'+'.join(names)}"
+        where = "Whole design: " if tid is None else "Adjust "
+        self.editor.push(edits.SetAdjustments(tid, current, new, text=f"{where}{', '.join(names)}", merge_key=key))
 
     def _on_invert(self, on: bool) -> None:
-        layer = self._layer()
-        if layer is not None and layer.adjust.invert != on:
+        current = self._target_adjust()
+        if current is not None and current.invert != on:
             self._flush()
-            new = copy.deepcopy(layer.adjust)
+            new = copy.deepcopy(current)
             new.invert = on
-            self.editor.push(edits.SetAdjustments(layer.id, layer.adjust, new, text="Invert colours"))
+            self.editor.push(edits.SetAdjustments(self._target_id(), current, new, text="Invert colours"))
 
     def _reset_all(self) -> None:
-        layer = self._layer()
-        if layer is not None and not layer.adjust.is_identity():
+        current = self._target_adjust()
+        if current is not None and not current.is_identity():
             self._flush()
-            self.editor.push(edits.SetAdjustments(layer.id, layer.adjust, Adjustments(),
+            self.editor.push(edits.SetAdjustments(self._target_id(), current, Adjustments(),
                                                   text="Reset adjustments"))
 
     def _on_compare(self, on: bool) -> None:
-        self.compare.emit(self._layer_id if on else None)
+        if self._whole:
+            self.global_compare.emit(on)
+        else:
+            self.compare.emit(self._layer_id if on else None)

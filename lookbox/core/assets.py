@@ -3,6 +3,9 @@
 An asset is an imported file, kept byte-for-byte (so 16-bit PNG and EXR are
 never degraded) and identified by the sha256 of those bytes. Decoded pixels are
 cached. Assets are immutable: nothing ever writes into a decoded array.
+
+Besides images, `.cube` LUT files are assets too (M10): parsed instead of decoded,
+AssetInfo width/height = the LUT size, read with `lut()` instead of `pixels()`.
 """
 
 from __future__ import annotations
@@ -15,6 +18,9 @@ import numpy as np
 
 from lookbox.core.io import images
 from lookbox.core.model import AssetInfo
+from lookbox.core.render import lut as lut_mod
+
+LUT_EXTS = (".cube",)
 
 
 class AssetStore:
@@ -22,6 +28,7 @@ class AssetStore:
         self._bytes: dict[str, bytes] = {}
         self._ext: dict[str, str] = {}
         self._pixels: dict[str, np.ndarray] = {}
+        self._luts: dict[str, lut_mod.Lut] = {}
         self._lock = threading.Lock()  # export runs in a worker thread
 
     # ---- adding ----
@@ -29,6 +36,11 @@ class AssetStore:
         """Store encoded bytes; decodes once to validate and learn the size."""
         ext = ext.lower()
         asset_id = hashlib.sha256(data).hexdigest()
+        if ext in LUT_EXTS:
+            parsed = self._luts.get(asset_id) or lut_mod.parse_cube(data)  # LutError if unusable
+            with self._lock:
+                self._bytes[asset_id], self._ext[asset_id], self._luts[asset_id] = data, ext, parsed
+            return AssetInfo(id=asset_id, ext=ext, width=parsed.size, height=parsed.size, name=name)
         with self._lock:
             known = asset_id in self._bytes
         if known:
@@ -67,6 +79,16 @@ class AssetStore:
         with self._lock:
             self._pixels.setdefault(asset_id, px)
             return self._pixels[asset_id]
+
+    def lut(self, asset_id: str) -> lut_mod.Lut:
+        with self._lock:
+            cached = self._luts.get(asset_id)
+            if cached is not None:
+                return cached
+            data = self._bytes[asset_id]
+        parsed = lut_mod.parse_cube(data)
+        with self._lock:
+            return self._luts.setdefault(asset_id, parsed)
 
     def ids(self) -> list[str]:
         with self._lock:

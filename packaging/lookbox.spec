@@ -13,6 +13,7 @@ datas = [
     (os.path.join(ROOT, "lookbox", "ui", "icon.png"), "lookbox/ui"),
     (os.path.join(ROOT, "lookbox", "ui", "icon.ico"), "lookbox/ui"),
     (os.path.join(ROOT, "lookbox", "models", "models.json"), "lookbox/models"),
+    (os.path.join(ROOT, "lookbox", "luts"), "lookbox/luts"),  # bundled filter looks (.cube)
 ]
 
 # onnxruntime-directml ships DirectML.dll next to its Python extension; make sure it comes along.

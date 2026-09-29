@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QSizePolicy, QT
 
 from lookbox.commands import edits
 from lookbox.core.model import FillLayer, TextLayer, Transform
+from lookbox.ui.canvas.grade_preview import GradePreview
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
 from lookbox.ui.editor import Editor
@@ -151,9 +152,17 @@ class MainWindow(QMainWindow):
         self.adjust_panel = AdjustPanel(self.editor, cut_section)
         self.adjust_panel.interactive.connect(self.canvas.layers.set_interactive)
         self.adjust_panel.compare.connect(self.canvas.layers.set_bypass)
+        # Whole-design grade (M10): its preview, and when the live layers show instead.
+        self.grade_preview = GradePreview(self.canvas, self.editor)
+        self.grade_preview.failed.connect(lambda msg: self.statusBar().showMessage(msg, 8000))
+        self.adjust_panel.global_interactive.connect(self.grade_preview.set_fast)
+        self.adjust_panel.global_compare.connect(lambda on: self.grade_preview.suspend("compare", on))
+        self.adjust_panel.interactive.connect(lambda _lid, on: self.grade_preview.suspend("slider", on))
+        self.canvas.brush.changed.connect(lambda: self.grade_preview.suspend("mask", self.canvas.brush.active))
         self.layer_panel = LayerPanel(self.editor)
         tabs.addTab(self.adjust_panel, "Adjust")
         self.layer_panel.interactive.connect(self.canvas.layers.set_interactive)
+        self.layer_panel.interactive.connect(lambda _lid, on: self.grade_preview.suspend("slider", on))
         tabs.addTab(self.layer_panel, "Style")
         tabs.addTab(LayersPanel(self.editor, self.thumbs), "Layers")
         self.tabs = tabs
@@ -252,6 +261,7 @@ class MainWindow(QMainWindow):
             return
         self.cutout.shutdown()
         self.canvas.brush.shutdown()
+        self.grade_preview.shutdown()
         self.docs.wait_all()  # an in-flight save must land before we exit
         self.renderer.shutdown()
         e.accept()

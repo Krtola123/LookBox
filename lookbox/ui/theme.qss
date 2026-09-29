@@ -150,3 +150,15 @@ QPushButton#primaryPush { background: #8b3dff; border-color: #8b3dff; color: whi
 QPushButton#primaryPush:hover { background: #9a55ff; }
 QPushButton#primaryPush:disabled { background: #3b2c5c; border-color: #3b2c5c; color: #9a93ad; }
 QPushButton:checked { background: #33245a; border-color: #8b3dff; color: #ffffff; }
+
+/* ---- Filters + whole-design target (M10) ---- */
+QToolButton#targetButton {
+    background: #2a2b30; border: 1px solid #3a3b40; border-radius: 8px; padding: 3px 8px; font-size: 11px;
+}
+QToolButton#targetButton:checked { background: #2f2942; border-color: #8b3dff; color: white; }
+QToolButton#filterButton {
+    background: transparent; border: 2px solid transparent; border-radius: 8px; padding: 2px;
+    font-size: 10px; min-width: 70px;
+}
+QToolButton#filterButton:hover { border-color: #4a4b52; }
+QToolButton#filterButton:checked { border-color: #8b3dff; background: #2f2942; color: white; }
