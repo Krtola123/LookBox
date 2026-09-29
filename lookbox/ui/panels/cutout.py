@@ -19,6 +19,7 @@ from lookbox.core.model import ImageLayer
 from lookbox.ui.canvas.mask_brush import MaskBrush
 from lookbox.ui.cutout import CutoutController
 from lookbox.ui.editor import Editor
+from lookbox.ui.panels.fill_row import FillRow
 from lookbox.ui.widgets.slider_row import SliderRow
 
 
@@ -186,6 +187,8 @@ class CutoutSection(QWidget):
         done_row.addWidget(self.session_extract)
         done_row.addWidget(self.cancel_btn)
         bb.addLayout(done_row)
+        self.fill_row = FillRow(brush, controller)
+        bb.addWidget(self.fill_row)
         col.addWidget(self.brush_box)
 
         controller.busy_changed.connect(lambda _b: self.refresh())

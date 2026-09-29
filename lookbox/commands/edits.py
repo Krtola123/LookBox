@@ -306,4 +306,4 @@ class Batch(Edit):
 from lookbox.commands.text_edits import SetText, change_text, resize_text  # noqa: E402,F401
 # Mask / render-pass edits likewise (M6, M8).
 from lookbox.commands.mask_edits import (  # noqa: E402,F401
-    SetMask, SetPass, extract_session, extract_to_layer, remove_background)
+    SetMask, SetPass, extract_session, extract_to_layer, fill_layer, grab, remove_background)

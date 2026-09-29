@@ -65,18 +65,28 @@ class ModelManager:
         self._session, self.provider, self.notice = create_session(path, prefer_gpu, self._ort)
         self._key = (path, self.provider)
 
-    def run(self, path: str, tensor: np.ndarray) -> np.ndarray:
-        """First output for a single-input model. A failed GPU run retries on the CPU."""
+    def _feeds(self, inputs) -> dict:
+        """One array → the model's first input. A dict → by name, or in the model's input
+        order when its names differ (exports rename inputs; the order is what's stable)."""
+        names = [i.name for i in self._session.get_inputs()]
+        if not isinstance(inputs, dict):
+            return {names[0]: inputs}
+        if set(inputs) <= set(names):
+            return dict(inputs)
+        return dict(zip(names, inputs.values()))
+
+    def run(self, path: str, inputs) -> np.ndarray:
+        """First output. `inputs`: an array (single-input models) or {name: array}.
+        A failed GPU run retries on the CPU."""
         with self._lock:
             self._load(path, prefer_gpu=True)
-            name = self._session.get_inputs()[0].name
             try:
-                return np.asarray(self._session.run(None, {name: tensor})[0])
+                return np.asarray(self._session.run(None, self._feeds(inputs))[0])
             except Exception as exc:
                 if self.provider == CPU:
                     raise
                 self._load_cpu(path, f"The GPU run failed ({exc}); retried on the CPU.")
-                return np.asarray(self._session.run(None, {name: tensor})[0])
+                return np.asarray(self._session.run(None, self._feeds(inputs))[0])
 
     def input_size(self, path: str, default: int) -> int:
         """The model's fixed input side if it declares one (e.g. 1024), else `default`."""

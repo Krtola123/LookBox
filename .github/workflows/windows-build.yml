@@ -28,10 +28,19 @@ jobs:
       - name: Install
         run: python -m pip install -r requirements-dev.txt "pyinstaller>=6.6"
 
+      # The real AI-fill model (208 MB) for its test, kept between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/models
+          key: models-lama-1faef530
+
       # Failures are also posted as an annotation (readable from the API without logs).
       # Real windows (not Qt's offscreen platform, which has no fonts on Windows).
       - name: Tests (real Qt)
         shell: pwsh
+        env:
+          RRIPP_TEST_LAMA: "1"
+          LOOKBOX_MODELS_DIR: ${{ runner.temp }}/models
         run: |
           python -m pytest -q -rf --tb=short -p no:cacheprovider 2>&1 | Tee-Object -FilePath pytest.txt
           $code = $LASTEXITCODE

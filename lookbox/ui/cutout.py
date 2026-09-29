@@ -1,5 +1,6 @@
-"""Cut-out flows (M6): choose + download the model, run background removal,
-apply the result as a layer mask. Every document change is an edit (§4.2)."""
+"""Cut-out flows: choose + download a model, run background removal (M6) and fills
+(M13: AI, quick or from a clean render; Fill and Grab), apply the result as edits
+(§4.2). One AI job at a time."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from lookbox.ai.runtime import ModelManager
 from lookbox.commands import edits
 from lookbox.core.io.images import ImageError
 from lookbox.core.model import ImageLayer, LayerMask
-from lookbox.ui.ai_jobs import DownloadJob, RemoveBackgroundJob
+from lookbox.ui.ai_jobs import DownloadJob, FillJob, RemoveBackgroundJob
 from lookbox.ui.editor import Editor
 from lookbox.ui.settings import app_settings
 
@@ -30,10 +31,12 @@ class CutoutController(QObject):
         self.window, self.editor = window, editor
         self.manager = ModelManager()
         self.settings = app_settings()
-        self.registry = {k: v for k, v in load_registry().items() if v.task == "background"}
+        models = load_registry()
+        self.registry = {k: v for k, v in models.items() if v.task == "background"}
+        self.lama = models.get("lama")
         self._job = None
         self._progress: QProgressDialog | None = None
-        self._pending: tuple[str, bool, bool] | None = None  # (layer id, refine, keep bg) waiting on a download
+        self._pending = None  # what to run once a model download finishes (a callable)
         self._run_ctx: tuple | None = None
 
     @property
@@ -84,17 +87,18 @@ class CutoutController(QObject):
         spec = self.current_spec() or self.choose_model()
         if spec is None:
             return
+        keep = self.keep_background
         if not is_ready(spec):
-            self._pending = (layer_id, refine, self.keep_background)
-            self._start_download(spec)
+            self._pending = lambda: self._start_run(spec, layer_id, refine, keep)
+            self._start_download(spec, "Background removal")
             return
-        self._start_run(spec, layer_id, refine, self.keep_background)
+        self._start_run(spec, layer_id, refine, keep)
 
-    def _start_download(self, spec: ModelSpec) -> None:
+    def _start_download(self, spec: ModelSpec, title: str) -> None:
         job = DownloadJob(spec)
         dlg = QProgressDialog(f"Downloading the {spec.name.lower()} model ({spec.size_mb} MB)…", "Cancel",
                               0, max(1, spec.size_mb), self.window)
-        dlg.setWindowTitle("Background removal")
+        dlg.setWindowTitle(title)
         dlg.setWindowModality(Qt.WindowModality.WindowModal)
         dlg.setAutoClose(False)
         dlg.setAutoReset(False)
@@ -114,9 +118,8 @@ class CutoutController(QObject):
         if error:
             QMessageBox.warning(self.window, "Model download failed", error)
             return
-        spec = self.current_spec()
-        if pending is not None and spec is not None:
-            self._start_run(spec, *pending)
+        if pending is not None:
+            pending()
 
     def _start_run(self, spec: ModelSpec, layer_id: str, refine: bool, keep_bg: bool) -> None:
         doc = self.editor.doc
@@ -159,6 +162,115 @@ class CutoutController(QObject):
         self.editor.push(edits.remove_background(doc, layer_id, LayerMask(asset=info.id), info, keep_bg))
         kept = " The background is on its own layer below." if keep_bg else ""
         self.status.emit(f"Background removed.{kept} {notice}", 8000)
+
+    # ------------------------------------------------------------ fill + grab (M13)
+    def fill(self, layer_id: str, mask, method: str, set_mask=None, grab: bool = False) -> None:
+        """Fill the selection `mask` (source-size, 1 = selected) on an image layer: a fill
+        layer above it; with `grab`, the selection also goes on its own layer on top
+        (`set_mask`: the session's SetMask, not applied yet). method: "ai" | "quick" | "plate"."""
+        from lookbox.core.masks import fill as F
+
+        doc = self.editor.doc
+        if self.busy or not doc.has_layer(layer_id) or not isinstance(doc.layer(layer_id), ImageLayer):
+            return
+        layer = doc.layer(layer_id)
+        rgba = self.editor.store.pixels(layer.source)
+        selected = float((mask > F.HOLE_THRESHOLD).mean())
+        if selected == 0.0 or selected > 0.9:
+            QMessageBox.information(self.window, "Fill", "Select what to remove first (Pick, Lasso or Brush): "
+                                    "the selected area is what gets filled.")
+            return
+        ctx = (self.editor.generation, layer_id, layer.source, self.editor.store, set_mask, grab)
+        if grab and F.on_transparency(rgba[:, :, 3], mask):
+            self._apply_fill(ctx, None, "It's on a transparent background, so there's nothing to fill behind it.")
+            return
+        if method == "plate":
+            plate = self._ask_plate(rgba.shape)
+            if plate is None:
+                return
+            self._start_fill(ctx, "plate", rgba, mask, plate=plate)
+            return
+        if method == "ai":
+            if importlib.util.find_spec("onnxruntime") is None or self.lama is None:
+                QMessageBox.warning(self.window, "AI fill", "The AI runtime isn't installed.")
+                return
+            if not is_ready(self.lama):
+                ok = QMessageBox.question(
+                    self.window, "AI fill",
+                    f"AI fill runs on your computer with a model that downloads once ({self.lama.size_mb} MB). "
+                    "Download it now?") == QMessageBox.StandardButton.Yes
+                if ok:
+                    self._pending = lambda: self._start_fill(ctx, "ai", rgba, mask)
+                    self._start_download(self.lama, "AI fill")
+                return
+        self._start_fill(ctx, method, rgba, mask)
+
+    def _ask_plate(self, shape):
+        from PySide6.QtWidgets import QFileDialog
+
+        from lookbox.core.io import images
+
+        path, _ = QFileDialog.getOpenFileName(
+            self.window, "Fill from a render: pick the same shot rendered without the object", "",
+            "Images (" + " ".join(f"*{e}" for e in images.SUPPORTED_EXTS) + ")")
+        if not path:
+            return None
+        try:
+            plate = images.decode(images.read_file(path), path[path.rfind("."):])
+        except (ImageError, OSError) as exc:
+            QMessageBox.warning(self.window, "Fill from a render", str(exc))
+            return None
+        if plate.shape[:2] != shape[:2]:
+            QMessageBox.warning(self.window, "Fill from a render",
+                                f"That render is {plate.shape[1]} × {plate.shape[0]}; this image is "
+                                f"{shape[1]} × {shape[0]}. Render the clean plate at the same size and camera.")
+            return None
+        return plate
+
+    def _start_fill(self, ctx, method: str, rgba, mask, plate=None) -> None:
+        self._fill_ctx = ctx
+        job = FillJob(method, rgba, mask, manager=self.manager, spec=self.lama, plate=plate)
+        label = {"ai": "Filling with AI…\n(the first run on a GPU can take a little longer)",
+                 "quick": "Filling…", "plate": "Filling from the render…"}[method]
+        dlg = QProgressDialog(label, "Cancel", 0, 0, self.window)
+        dlg.setWindowTitle("Fill")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(300)
+        dlg.canceled.connect(lambda: setattr(self, "_fill_ctx", None))  # result will be discarded
+        job.done.connect(self._on_filled)
+        self._begin(job, dlg)
+
+    @Slot(bytes, str, str)
+    def _on_filled(self, png: bytes, error: str, notice: str) -> None:
+        ctx, self._fill_ctx = getattr(self, "_fill_ctx", None), None
+        self._end()
+        if error:
+            QMessageBox.warning(self.window, "Fill", error)
+            return
+        if ctx is None:
+            self.status.emit("Fill cancelled.", 4000)
+            return
+        store = ctx[3]
+        info = store.add_bytes(bytes(png), ".png", "fill") if png else None
+        self._apply_fill(ctx, info, notice)
+
+    def _apply_fill(self, ctx, info, notice: str) -> None:
+        generation, layer_id, source, store, set_mask, grab = ctx
+        doc = self.editor.doc
+        if (generation != self.editor.generation or store is not self.editor.store or not doc.has_layer(layer_id)
+                or getattr(doc.layer(layer_id), "source", None) != source):
+            self.status.emit("The fill finished, but that layer changed meanwhile; nothing applied.", 6000)
+            return
+        if grab:
+            batch = edits.grab(doc, layer_id, set_mask, info)
+            if batch is None:
+                return
+            self.editor.push(batch)
+            self.editor.select(batch.parts[-2 if info is None else 1].layer.id)
+            self.status.emit(f"Grabbed: it's on its own layer, the hole behind it is filled. {notice}", 8000)
+        elif info is not None:
+            self.editor.push(edits.fill_layer(doc, layer_id, info))
+            self.status.emit(f"Filled, on its own layer above (hide it to see the original). {notice}", 8000)
 
     # ------------------------------------------------------------ job plumbing
     def _begin(self, job, dlg: QProgressDialog) -> None:

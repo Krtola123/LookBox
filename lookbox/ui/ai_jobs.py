@@ -67,3 +67,42 @@ class RemoveBackgroundJob(QThread):
         else:
             where = "GPU" if self.manager.provider == "DmlExecutionProvider" else "CPU"
             self.done.emit(png, "", self.manager.notice or f"Ran on the {where}.")
+
+
+class FillJob(QThread):
+    """Fills the selection (§9a) and returns the fill image (same size as the source) as a
+    16-bit PNG. `method`: "ai" (LaMa via `manager`), "quick" (OpenCV) or "plate" (`plate`)."""
+
+    done = Signal(bytes, str, str)  # fill png, error ("" = ok), notice
+
+    def __init__(self, method: str, rgba: np.ndarray, mask: np.ndarray, manager: ModelManager | None = None,
+                 spec: ModelSpec | None = None, plate: np.ndarray | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self.method, self.rgba, self.mask = method, rgba, mask
+        self.manager, self.spec, self.plate = manager, spec, plate
+
+    def run(self) -> None:
+        from lookbox.ai import lama
+        from lookbox.core.io.images import encode_png
+        from lookbox.core.masks import fill as F
+
+        rgb = np.ascontiguousarray(self.rgba[:, :, :3], np.float32)
+        notice = ""
+        try:
+            if self.method == "ai":
+                path = model_path(self.spec)
+                filled = lama.fill(lambda feeds: self.manager.run(path, feeds), rgb, self.mask)
+                where = "GPU" if self.manager.provider == "DmlExecutionProvider" else "CPU"
+                notice = self.manager.notice or f"Ran on the {where}."
+            elif self.method == "plate":
+                filled = F.plate_fill(rgb, self.plate, self.mask)
+            else:
+                filled = F.quick_fill(rgb, self.mask)
+            patch = F.make_patch(filled, self.mask)
+            png = encode_png(patch, bits=16) if patch is not None else b""
+        except MemoryError:
+            self.done.emit(b"", "Not enough memory to fill this area.", "")
+        except Exception as exc:  # surfaced to the user, never swallowed (§16.5)
+            self.done.emit(b"", f"Fill failed: {exc}", "")
+        else:
+            self.done.emit(png, "", notice)

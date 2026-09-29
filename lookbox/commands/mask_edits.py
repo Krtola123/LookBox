@@ -1,5 +1,5 @@
-"""Undoable edits for masks and render passes (M6, M8): set a cut-out, attach a pass,
-extract to a new layer, remove background. Plain Python like the rest of commands/;
+"""Undoable edits for masks and render passes (M6, M8) and fills (M13): set a cut-out,
+attach a pass, extract to a new layer, remove background, fill, grab. Plain Python like the rest of commands/;
 reached as `edits.SetMask` etc."""
 
 from __future__ import annotations
@@ -141,3 +141,55 @@ def remove_background(doc: Document, layer_id: str, mask, asset: AssetInfo | Non
     bg.effects = type(layer.effects)()  # a shadow/glow on the leftover background makes no sense
     bg.locked = False
     return Batch([set_mask, AddLayer(bg, index=doc.layer_index(layer_id))], text="Remove background")
+
+
+def _patch_layer(doc: Document, layer_id: str, patch: AssetInfo, keep_mask: bool = True):
+    """A copy of the layer showing `patch` (same size as its source) instead: same place,
+    crop, mask, adjustments and filter, so the fill matches the original exactly. No
+    effects: a second shadow or outline would double up."""
+    from lookbox.core.model import Effects, new_id
+
+    src = doc.layer(layer_id)
+    info = doc.assets[src.source]
+    if (patch.width, patch.height) != (info.width, info.height):
+        raise ValueError("A fill must be the same size as the layer's image.")
+    layer = copy.deepcopy(src)
+    layer.id, layer.name, layer.source, layer.locked = new_id(), f"{src.name} fill", patch.id, False
+    layer.effects, layer.passes = Effects(), {}
+    if not keep_mask:
+        layer.mask = None
+    return layer
+
+
+def fill_layer(doc: Document, layer_id: str, patch: AssetInfo) -> AddLayer:
+    """Fill (§9a): the filled area goes on its own layer right above the original, which
+    stays untouched (hide or delete the fill layer to get it back)."""
+    return AddLayer(_patch_layer(doc, layer_id, patch), index=doc.layer_index(layer_id) + 1,
+                    asset=patch, text="Fill")
+
+
+def grab(doc: Document, layer_id: str, set_mask: "SetMask | None", patch: AssetInfo | None) -> Batch | None:
+    """Grab (§9a, Canva's "Magic Grab"): the selection goes on its own layer on top and the
+    hole it leaves is filled (patch layer between). With no patch (an object on a
+    transparent render), the original just hides the object instead. One undo step."""
+    src = doc.layer(layer_id)
+    mask = set_mask.new if set_mask is not None else src.mask
+    if mask is None:
+        return None
+    idx = doc.layer_index(layer_id)
+    parts: list[Edit] = []
+    if patch is not None:
+        # The original shows everything after a grab, so its fill doesn't keep the old cut-out.
+        parts.append(AddLayer(_patch_layer(doc, layer_id, patch, keep_mask=False), index=idx + 1, asset=patch))
+    cut = copy.deepcopy(src)
+    from lookbox.core.model import new_id
+
+    cut.id, cut.name, cut.locked, cut.mask = new_id(), f"{src.name} grab", False, copy.deepcopy(mask)
+    parts.append(AddLayer(cut, index=idx + 1 + len(parts), asset=set_mask.asset if set_mask is not None else None))
+    if patch is None:  # nothing behind it: hide the object in the original instead
+        hidden = copy.deepcopy(mask)
+        hidden.invert = not mask.invert
+        parts.append(SetMask(layer_id, src.mask, hidden))
+    elif src.mask is not None:
+        parts.append(SetMask(layer_id, src.mask, None))
+    return Batch(parts, text="Grab")

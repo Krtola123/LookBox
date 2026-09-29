@@ -269,3 +269,38 @@ def test_filters_on_a_layer_and_the_whole_design(tmp_path):
             assert _wait(lambda: not win.grade_preview.item.isVisible()) and not win.canvas.layers.covered
         finally:
             _close(win)
+
+
+def test_fill_and_grab_from_a_lasso(tmp_path):
+    _app()
+    with _QtEngine():
+        win = _window()
+        try:
+            from lookbox.core.io import render_sets
+
+            ed = win.editor
+            items, _, _ = render_sets.import_files(ed.store, [_render_set(tmp_path)])
+            ed.add_imported(ed.store, items, (80.0, 60.0))
+            layer = ed.selected_layer()
+            win.canvas.set_zoom(4.0)
+            brush = win.canvas.brush
+            row = win.adjust_panel.cutout.fill_row
+            row.method.setCurrentIndex(1)  # quick fill: no download
+            for grab in (False, True):
+                brush.tool = "lasso"
+                brush.start(layer.id)
+                brush.press(30, 50, shift=False, alt=False)
+                for x, y in ((60, 50), (60, 70), (30, 70)):
+                    brush.move(x, y, dragging=True, alt=False)
+                brush.release()
+                n = len(ed.doc.layers)
+                row._run(grab=grab)
+                assert _wait(lambda: not win.cutout.busy and len(ed.doc.layers) > n, 20000)
+                assert not brush.active
+            names = [lay.name for lay in ed.doc.layers]
+            assert names[-1].endswith("grab") and any(nm.endswith("fill") for nm in names)
+            ed.stack.undo()
+            ed.stack.undo()
+            assert len(ed.doc.layers) == 1
+        finally:
+            _close(win)
