@@ -123,6 +123,8 @@ FillLayer(Layer)                    # backdrops; no asset
 Layer.fade: GradientFade | None     # kind linear|radial, angle_deg, start/end (0–1), invert
 ```
 
+**Pages (M14, §5a):** a project is `Project(pages: list[Document])`; each page is a full design (own `id`, `name`, canvas size, background, layers, whole-design grade). Pages share one AssetStore: duplicating a page shares its images. File format v2: `{"format_version": 2, "project": {"pages": [...]}}`, assets stored once for all pages; v1 files migrate to one page. Editing: the Editor's `doc` is the *active* page, so all tools work unchanged; page-list edits (`AddPage`, `RemovePage`, `MovePage`) apply to the Project, `SetCanvas`/`SetPageName` to a page. One undo stack; undoing a change on another page switches to it. The canvas (`ui/canvas/pages.py`) lays pages out top to bottom in project space and shifts the scene so the active page sits at (0, 0) (the layer/handle code never sees pages); inactive pages are worker-rendered pictures refreshed when their content hash changes. Export: choose pages, one PNG each (`_p1`, `_p2`…). Copy/paste layers across pages brings their assets.
+
 **Assets** are stored once and referenced by hash. Duplicating a layer never copies pixels.
 
 **Project file:** `.rripp` = a zip containing `document.json` + `assets/<sha256>.png|exr`. Include `"format_version": 1` and write a migration function whenever the schema changes.
@@ -456,6 +458,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works (done, see §7a) |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |
+| M14 | Pages (added after M13) | Several designs in one project, stacked on the canvas; choose which to export. Done, see §5 "Pages" |
 | M13 | Fill + Grab (added after M12) | Remove a selected object and fill behind it (AI, quick, or from a clean-plate render); Grab = lift it onto its own layer + fill the hole. Done, see §9a |
 | M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed (done: GitHub Actions `windows-latest` builds it and runs `RRIPP.exe --selftest`, see §15b) |
 
