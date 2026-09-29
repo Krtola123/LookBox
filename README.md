@@ -52,7 +52,7 @@ wherever PySide6 is installed, including every GitHub build, and is skipped else
 Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/canvas/handles.py` is Qt-free and fully tested
 (text layout included, with a stand-in for the Qt font engine).
 
-## Status: 1.1.0 (M10: filters and whole-design grade)
+## Status: 1.2.0 (M13: Fill and Grab)
 
 | Works | How |
 |---|---|
@@ -80,6 +80,7 @@ Everything under `lookbox/core`, `lookbox/commands/edits.py` and `lookbox/ui/can
 | Render passes | Import a render and RRIPP finds its passes next to it: `shot_objectid.png`, `shot_Object ID.png`, `shot_MaterialID.png`, `shot_alpha.png` (any case, spaces/dashes/underscores, frame numbers). Picking the passes together with the render works too. Not named like that? **Adjust → Cut-out → Attach ID pass…**. An alpha pass cuts the render out automatically |
 | Pick object | **Pick object…** (renders with an ID pass): click an object and it's selected exactly, with the render's own soft edge. Shift+click adds objects, Alt+click removes. Switch between Object ID and Material ID. **Extract** puts it on its own layer |
 | Lasso | **Lasso…**: drag around something, or click corner by corner and press Enter (or double-click). Shift adds, Alt removes. Works on any image |
+| Fill / Grab | Select something (Pick object, Lasso or Brush), then **Fill** to replace it with what's around it, or **Grab** to lift it onto its own layer and fill the hole behind it. **Fill with:** *AI fill* (208 MB model, downloads once), *Quick fill* (no download, small spots) or *From a clean render* (the same shot rendered without the object: exact, best for renders). The fill is its own layer: hide it to see the original |
 | Keep the thing | **Extract to new layer**: the cut-out goes on its own layer above; the original shows everything again |
 | Keep the background | On by default ("Keep the background as its own layer"): Remove background also puts what was removed on a layer right below, so you can blur, adjust or hide it. One undo step |
 | If something breaks | RRIPP shows a dialog instead of closing and writes the details to `%LOCALAPPDATA%\RRIPP\logs\rripp.log`. Send that file |

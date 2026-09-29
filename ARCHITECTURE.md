@@ -278,6 +278,14 @@ All selection tools produce a **float32 mask** at the layer's source resolution.
 
 The mask edit UI is a mode: the layer shows unmasked, a red overlay marks hidden areas, Done/Cancel (Enter/Esc), Alt flips erase/restore, [ ] resize. One brush session = one undo step. Switching layers applies the session; so does New/Open/Close (before the save prompt, so painting is never lost silently).
 
+## 9a. Fill and Grab (M13)
+
+- **Where the selection comes from:** the mask session (§9): Pick, Lasso or Brush. Selected = the mask. **Fill** replaces it with its surroundings; **Grab** also lifts it onto its own layer on top (Canva's Magic Grab). One undo step each.
+- **Fill with** (remembered): **AI** — LaMa (`Carve/LaMa-ONNX`, `lama_fp32.onnx`, 208 MB, Apache 2.0; fixed 512 × 512 input, image 0–1 + 0/1 mask, output 0–255, checked). Each area is cut out with context (≥ 48 px or 60% of its size), resized to 512, filled, resized back; big areas come out softer. **Quick** — OpenCV Telea in 16-bit, no download; small blemishes only. **From a clean render** — the same shot rendered without the object (same size); exact, and the right tool for Toolbag renders.
+- **Never destructive:** the fill is a new layer right above the original: a copy of it with the fill as its image (same size as the source, transparent except the selection grown 3 px and feathered), so crop, mask, adjustments and filters line up exactly. No effects on it (they'd double).
+- **Transparent renders:** if the selection is surrounded by transparency, there's nothing behind it: Grab hides the object in the original (inverted mask) instead of painting a fill.
+- CI downloads the real model (sha256-checked, cached) and fills a synthetic hole with it.
+
 ---
 
 ## 10. AI subsystem
@@ -298,6 +306,7 @@ As built (M6, `ai/runtime.py`): a `ModelManager` keeps **at most one** model loa
 |---|---|---|
 | Remove background | BiRefNet (onnx-community exports): "Best quality" = BiRefNet-ONNX (973 MB), "Fast" = BiRefNet_lite-ONNX (224 MB), fp32 | Input 1024×1024 RGB, /255, ImageNet mean/std (per the export's preprocessor_config.json). Output logits or probabilities, detected; sigmoid only when needed. Bilinear upsample to source size; refine edge optional (§9) |
 | Smart select | SAM 2.1 (tiny or small), ONNX encoder + decoder | Run the encoder **once per image** and cache the embedding by asset hash. The decoder is fast; rerun it per click |
+| Fill (M13) | LaMa, `Carve/LaMa-ONNX` `lama_fp32.onnx` (208 MB) | Fixed 512 × 512; inputs `image` (0–1) + `mask` (0/1); output 0–255. Regions cut out with context and resized (§9a) |
 | Upscale | Real-ESRGAN x4plus, ONNX | Tiled: 512 px tiles on ≥6 GB, 256 px in low-VRAM mode, 16 px overlap, feathered blend. Alpha is upscaled separately (bicubic) |
 
 Model sources, filenames, sizes and sha256 values live in `lookbox/models/models.json`, **not in code** (M6 values taken from the Git LFS pointers). At build time, verify that the ONNX exports exist and work on DirectML before committing to one. Export from PyTorch yourself if necessary (a dev-only script in `tools/`).
@@ -447,6 +456,7 @@ Each milestone ends with its acceptance checks passing and a git commit. **Do no
 | M9 | SAM smart select | Click-select in under 300 ms per click after the first encode |
 | M10 | LUT filters + global adjust | A .cube file loads; a strength slider works (done, see §7a) |
 | M11 | Upscale | 2× and 4× work with tiling in low-VRAM mode |
+| M13 | Fill + Grab (added after M12) | Remove a selected object and fill behind it (AI, quick, or from a clean-plate render); Grab = lift it onto its own layer + fill the hole. Done, see §9a |
 | M12 | Packaging | The `--onedir` build runs on a clean Windows machine with no Python installed (done: GitHub Actions `windows-latest` builds it and runs `RRIPP.exe --selftest`, see §15b) |
 
 Test on the RX 570 (or force low-VRAM mode + CPU) at M8, M9 and M11, not at the end.
