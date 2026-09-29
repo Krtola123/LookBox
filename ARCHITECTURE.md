@@ -127,7 +127,7 @@ Layer.fade: GradientFade | None     # kind linear|radial, angle_deg, start/end (
 
 **Assets** are stored once and referenced by hash. Duplicating a layer never copies pixels.
 
-**Project file:** `.rripp` = a zip containing `document.json` + `assets/<sha256>.png|exr`. Include `"format_version": 1` and write a migration function whenever the schema changes.
+**Project file:** `.rripp` (formerly `.lookbox`) = a zip containing `document.json` + `assets/<sha256>.<ext>`. `"format_version"` is 2 since pages (M14); `serialize.migrate` upgrades older files. Add a migration step whenever the schema changes.
 
 ---
 
