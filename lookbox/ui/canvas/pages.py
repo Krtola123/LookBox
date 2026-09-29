@@ -26,7 +26,8 @@ from lookbox.core.render.levels import to_display_bgra
 from lookbox.core.render.pipeline import premultiply, render
 from lookbox.ui.canvas.layer_items import bgra_to_pixmap
 
-GAP_FRACTION = 0.08  # space between pages (holds each page's label), of the tallest page
+GAP_FRACTION = 0.1  # space between pages (holds each page's label), of the tallest page…
+GAP_MIN_PX = 44.0  # …but never less than this on screen, so labels don't crowd when zoomed out
 MAX_PIXELS = 2_000_000  # per page picture
 LABEL = QColor("#9fa0a6")
 LABEL_ACTIVE = QColor("#c7a6ff")
@@ -92,11 +93,12 @@ class PageStrip(QObject):
         editor.changed.connect(self._on_changed)
         editor.pages_changed.connect(self.relayout)
         editor.document_replaced.connect(self._on_replaced)
-        view.zoom_changed.connect(lambda _z: self._timer.start())
+        view.zoom_changed.connect(self._on_zoom)
 
     # ---- layout ----
     def _gap(self) -> float:
-        return GAP_FRACTION * max(p.canvas.h for p in self.editor.project.pages)
+        z = max(self.view.zoom(), 1e-3)
+        return max(GAP_FRACTION * max(p.canvas.h for p in self.editor.project.pages), GAP_MIN_PX / z)
 
     def _project_rects(self) -> dict[str, QRectF]:
         pages = self.editor.project.pages
@@ -118,9 +120,9 @@ class PageStrip(QObject):
     def add_rect(self) -> QRectF:
         """The "+ Add page" target under the last page."""
         last = self._scene_rects()[self.editor.project.pages[-1].id]
-        h = self._gap() * 0.7
-        return QRectF(last.center().x() - last.width() * 0.2, last.bottom() + self._gap() * 0.15,
-                      last.width() * 0.4, h)
+        z = max(self.view.zoom(), 1e-3)
+        w, h = 150 / z, 34 / z  # a constant-size button on screen
+        return QRectF(last.center().x() - w / 2, last.bottom() + 12 / z, w, h)
 
     def scene_rect(self) -> QRectF:
         u = QRectF()
@@ -154,6 +156,11 @@ class PageStrip(QObject):
         self.items.clear()
         self._origin = QPointF(0, 0)
         self.refresh()
+
+    def _on_zoom(self, _z: float) -> None:
+        if len(self.editor.project.pages) > 1:
+            self.refresh()  # the gap is partly in screen pixels: other pages move a little
+        self._timer.start()
 
     def _on_changed(self) -> None:
         sizes = tuple((p.id, p.canvas.w, p.canvas.h) for p in self.editor.project.pages)
