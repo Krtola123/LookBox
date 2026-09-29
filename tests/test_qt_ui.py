@@ -298,7 +298,8 @@ def test_fill_and_grab_from_a_lasso(tmp_path):
                 assert _wait(lambda: not win.cutout.busy and len(ed.doc.layers) > n, 20000)
                 assert not brush.active
             names = [lay.name for lay in ed.doc.layers]
-            assert names[-1].endswith("grab") and any(nm.endswith("fill") for nm in names)
+            # Grab puts its fill right above the original and the grabbed part above that.
+            assert names[:3] == ["shot", "shot fill", "shot grab"] and names.count("shot fill") == 2
             ed.stack.undo()
             ed.stack.undo()
             assert len(ed.doc.layers) == 1
