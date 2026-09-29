@@ -22,7 +22,7 @@ def main(out: str) -> None:
     os.makedirs(out, exist_ok=True)
     from PySide6.QtWidgets import QApplication, QToolBar
 
-    from lookbox.app import resource
+    from lookbox.app import load_theme
     from lookbox.core.io import images
     from lookbox.core.io.render_sets import ImportItem
     from lookbox.core.render import text as text_render
@@ -31,8 +31,7 @@ def main(out: str) -> None:
 
     app = QApplication(sys.argv[:1])
     app.setStyle("Fusion")
-    with open(resource("theme.qss"), encoding="utf-8") as fh:
-        app.setStyleSheet(fh.read())
+    app.setStyleSheet(load_theme())
     text_render.set_engine(QtTextEngine())
     win = MainWindow()
     win.resize(1440, 900)

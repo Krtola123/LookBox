@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QDockWidget, QLabel, QMainWindow, QSizePolicy, QTabWidget, QToolBar,
                                QToolButton, QWidget)
 
 from lookbox.commands import edits
 from lookbox.core.model import FillLayer, TextLayer, Transform
+from lookbox.ui import icons
 from lookbox.ui.canvas.grade_preview import GradePreview
 from lookbox.ui.canvas.view import CanvasView
 from lookbox.ui.documents import DocumentActions
@@ -31,6 +32,8 @@ class MainWindow(QMainWindow):
         self.docs = DocumentActions(self, self.editor)
 
         self.canvas = CanvasView(self.editor, self.renderer)
+        for policy in (self.canvas.setHorizontalScrollBarPolicy, self.canvas.setVerticalScrollBarPolicy):
+            policy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # pan with Space/middle drag, like Canva
         self.setCentralWidget(self.canvas)
         self._build_actions()
         self._build_top_bar()
@@ -75,7 +78,8 @@ class MainWindow(QMainWindow):
         self.act_open = self._action("Open", d.open_project, S.Open)
         self.act_save = self._action("Save", lambda: d.save_project(), S.Save)
         self.act_save_as = self._action("Save as", lambda: d.save_project_as(), "Ctrl+Shift+S")
-        self.act_import = self._action("Import image", d.import_images, "Ctrl+I")
+        self.act_import = self._action("Image", d.import_images, "Ctrl+I",
+                                       "Import images or renders (Ctrl+I); passes next to them come along")
         self.act_export = self._action("Export", d.export_png, "Ctrl+E", "Export PNG (Ctrl+E)")
         stack = self.editor.stack
         self.act_undo = self._action("Undo", stack.undo, "Ctrl+Z")
@@ -132,14 +136,16 @@ class MainWindow(QMainWindow):
         rail.setMovable(False)
         rail.setOrientation(Qt.Orientation.Vertical)
         rail.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        select = QAction("Select", self)
+        rail.setIconSize(QSize(24, 24))
+        select = QAction(icons.icon("select"), "Select", self)
         select.setCheckable(True)
         select.setChecked(True)
         select.setToolTip("Select, move, resize, rotate")
         rail.addAction(select)
-        rail.addAction(self.act_import)
-        rail.addAction(self.act_text)
-        rail.addAction(self.act_fill)
+        rail.addSeparator()
+        for act, name in ((self.act_import, "image"), (self.act_text, "text"), (self.act_fill, "backdrop")):
+            act.setIcon(icons.icon(name))
+            rail.addAction(act)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, rail)
 
     def _build_panel(self) -> None:

@@ -66,8 +66,6 @@ class AdjustPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         header = QHBoxLayout()
         header.setContentsMargins(16, 10, 12, 4)
-        header.addWidget(_title("Adjust"))
-        header.addStretch(1)
         self.target_btns: dict[bool, QToolButton] = {}
         for whole, label, tip in ((False, "This layer", "Adjust the selected image"),
                                   (True, "Whole design", "Grade everything together: applied to the finished image")):
@@ -79,7 +77,7 @@ class AdjustPanel(QWidget):
             b.clicked.connect(lambda _=False, w=whole: self.set_whole(w))
             header.addWidget(b)
             self.target_btns[whole] = b
-        header.addSpacing(6)
+        header.addStretch(1)
         self.compare_btn = QToolButton()
         self.compare_btn.setObjectName("compareButton")
         self.compare_btn.setText("Before / After")

@@ -18,6 +18,13 @@ def resource(name: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", name)
 
 
+def load_theme() -> str:
+    """theme.qss with {UI} pointing at the UI folder (for the images it uses)."""
+    with open(resource("theme.qss"), encoding="utf-8") as fh:
+        qss = fh.read()
+    return qss.replace("{UI}", os.path.dirname(resource("theme.qss")).replace("\\", "/"))
+
+
 def _harden_frozen() -> None:
     """A windowed exe has no console: sys.stdout/stderr are None, and anything that
     prints (tracebacks included) would crash. Send them nowhere instead; errors still
@@ -63,8 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationVersion(lookbox.__version__)
     app.setWindowIcon(QIcon(resource("icon.png")))
     app.setStyle("Fusion")
-    with open(resource("theme.qss"), encoding="utf-8") as fh:
-        app.setStyleSheet(fh.read())
+    app.setStyleSheet(load_theme())
     text_render.set_engine(QtTextEngine())  # needs the QApplication (fonts); before any document loads
 
     if selftest:

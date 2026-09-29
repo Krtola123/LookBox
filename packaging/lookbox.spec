@@ -12,6 +12,7 @@ datas = [
     (os.path.join(ROOT, "lookbox", "ui", "theme.qss"), "lookbox/ui"),
     (os.path.join(ROOT, "lookbox", "ui", "icon.png"), "lookbox/ui"),
     (os.path.join(ROOT, "lookbox", "ui", "icon.ico"), "lookbox/ui"),
+    (os.path.join(ROOT, "lookbox", "ui", "check.png"), "lookbox/ui"),
     (os.path.join(ROOT, "lookbox", "models", "models.json"), "lookbox/models"),
     (os.path.join(ROOT, "lookbox", "luts"), "lookbox/luts"),  # bundled filter looks (.cube)
 ]

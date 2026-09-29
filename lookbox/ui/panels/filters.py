@@ -150,7 +150,7 @@ class FiltersSection(QWidget):
         b = QToolButton()
         b.setObjectName("filterButton")
         b.setCheckable(True)
-        b.setText(name)
+        b.setText(name.replace("&", "&&"))  # "&" would be taken as a keyboard shortcut marker
         b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         b.setIcon(self._icon(lut))
         b.setIconSize(QSize(THUMB, THUMB))

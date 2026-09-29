@@ -16,11 +16,11 @@ QToolBar#topBar {
     spacing: 4px;
 }
 QToolBar#toolRail {
-    background: #202124;
+    background: #1b1c1f;
     border: none;
-    border-right: 1px solid #2a2b2f;
-    padding: 8px 4px;
-    spacing: 8px;
+    border-right: 1px solid #26272b;
+    padding: 10px 7px;
+    spacing: 4px;
 }
 QToolBar QToolButton {
     background: transparent;
@@ -32,7 +32,18 @@ QToolBar QToolButton {
 QToolBar QToolButton:hover { background: #2e2f33; }
 QToolBar QToolButton:checked { background: #33245a; color: #ffffff; }
 QToolBar QToolButton:disabled { color: #5b5c61; }
-QToolBar#toolRail QToolButton { min-width: 56px; padding: 10px 4px; }
+/* Rail: icon over a small label, quiet until hovered; the active tool gets a soft accent tile. */
+QToolBar#toolRail QToolButton {
+    min-width: 58px; max-width: 58px;
+    padding: 9px 0 7px 0;
+    border-radius: 10px;
+    color: #a9abb3;
+    font-size: 11px;
+}
+QToolBar#toolRail QToolButton:hover { background: #25262a; color: #e6e7ea; }
+QToolBar#toolRail QToolButton:pressed { background: #2c2d32; }
+QToolBar#toolRail QToolButton:checked { background: #2d2640; color: #ffffff; }
+QToolBar#toolRail::separator { background: #2a2b2f; height: 1px; margin: 6px 10px; }
 
 QToolButton#primaryButton {
     background: #8b3dff;
@@ -162,3 +173,13 @@ QToolButton#filterButton {
 }
 QToolButton#filterButton:hover { border-color: #4a4b52; }
 QToolButton#filterButton:checked { border-color: #8b3dff; background: #2f2942; color: white; }
+
+/* ---- Checkboxes: a visible box everywhere (the dark theme hid unchecked ones) ---- */
+QCheckBox { background: transparent; spacing: 8px; }
+QCheckBox::indicator {
+    width: 16px; height: 16px; border-radius: 4px;
+    border: 1px solid #5a5b62; background: #232428;
+}
+QCheckBox::indicator:hover { border-color: #8b3dff; }
+QCheckBox::indicator:checked { background: #8b3dff; border-color: #8b3dff; image: url({UI}/check.png); }
+QCheckBox::indicator:disabled { border-color: #3a3b40; background: #1f2023; }
